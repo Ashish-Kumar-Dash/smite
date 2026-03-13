@@ -5,6 +5,7 @@ ARG LLVM_V=19
 ARG GO_VERSION=1.24.11
 ARG LND_VERSION=v0.20.0-beta
 ARG BITCOIN_VERSION=29.2
+ARG SCENARIO
 
 ENV LLVM_V=${LLVM_V}
 
@@ -67,10 +68,11 @@ COPY Cargo.toml Cargo.lock ./
 COPY smite/ smite/
 COPY smite-scenarios/ smite-scenarios/
 COPY smite-nyx-sys/ smite-nyx-sys/
-RUN TARGET_PATH=/lnd/cmd/lnd/lnd cargo build -p smite-scenarios --bin lnd --release --features nyx
+RUN TARGET_PATH=/lnd/cmd/lnd/lnd cargo build -p smite-scenarios --bin lnd_${SCENARIO} --release --features nyx
 
 # Runtime image
 FROM debian:bookworm-slim
+ARG SCENARIO
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -87,7 +89,7 @@ COPY --from=builder /usr/local/bin/bitcoind /usr/local/bin/bitcoind
 COPY --from=builder /usr/local/bin/bitcoin-cli /usr/local/bin/bitcoin-cli
 
 # Copy the lnd-scenario binary
-COPY --from=builder /smite/target/release/lnd /lnd-scenario
+COPY --from=builder /smite/target/release/lnd_${SCENARIO} /lnd-scenario
 
 # Copy the init script
 COPY ./workloads/lnd/init.sh /init.sh

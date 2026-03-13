@@ -3,6 +3,7 @@ FROM debian:bookworm AS builder
 # Build arguments
 ARG LLVM_V=19
 ARG BITCOIN_VERSION=29.2
+ARG SCENARIO
 
 ENV LLVM_V=${LLVM_V}
 
@@ -59,7 +60,7 @@ COPY smite/ smite/
 COPY smite-scenarios/ smite-scenarios/
 COPY smite-nyx-sys/ smite-nyx-sys/
 RUN TARGET_PATH=/ldk-wrapper/target/release/ldk-node-wrapper \
-    cargo build -p smite-scenarios --bin ldk --release --features nyx
+    cargo build -p smite-scenarios --bin ldk_${SCENARIO} --release --features nyx
 
 # Build crash handler shared libraries, LD_PRELOADed into ldk-node-wrapper to
 # report crashes immediately (before process teardown closes TCP sockets).
@@ -72,6 +73,7 @@ RUN clang-${LLVM_V} -fPIC -DENABLE_NYX -DNO_PT_NYX -D_GNU_SOURCE \
 
 # Runtime image
 FROM debian:bookworm-slim
+ARG SCENARIO
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -88,7 +90,7 @@ COPY --from=builder /usr/local/bin/bitcoind /usr/local/bin/bitcoind
 COPY --from=builder /usr/local/bin/bitcoin-cli /usr/local/bin/bitcoin-cli
 
 # Copy the ldk-scenario binary
-COPY --from=builder /smite/target/release/ldk /ldk-scenario
+COPY --from=builder /smite/target/release/ldk_${SCENARIO} /ldk-scenario
 
 # Default to the local crash handler; init.sh overrides with the Nyx version.
 ENV SMITE_CRASH_HANDLER=/crash-handler.so

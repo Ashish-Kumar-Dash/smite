@@ -2,9 +2,10 @@
 #
 # Generate an HTML coverage report from a corpus of fuzz inputs.
 #
-# Usage: ./scripts/coverage-report.sh <target> <corpus-dir> [output-dir]
+# Usage: ./scripts/coverage-report.sh <target> <scenario> <corpus-dir> [output-dir]
 #
-# Supported targets: lnd, cln, ldk, eclair
+# Targets:   lnd, cln, ldk, eclair
+# Scenarios: encrypted_bytes
 #
 # This script:
 # 1. Builds (if needed) a coverage-instrumented Docker image
@@ -13,13 +14,14 @@
 #
 set -eu
 
-if [ $# -lt 2 ]; then
-    echo "Usage: $0 <target> <corpus-dir> [output-dir]"
+if [ $# -lt 3 ]; then
+    echo "Usage: $0 <target> <scenario> <corpus-dir> [output-dir]"
     echo ""
     echo "Arguments:"
     echo "  target      Target implementation (lnd, cln, ldk, eclair)"
+    echo "  scenario    Scenario name (encrypted_bytes)"
     echo "  corpus-dir  Directory containing fuzz input files"
-    echo "  output-dir  Output directory for coverage report (default: ./<target>-coverage-report)"
+    echo "  output-dir  Output directory (default: ./<target>-<scenario>-coverage-report)"
     echo ""
     echo "Environment variables:"
     echo "  REBUILD=1   Force rebuild of Docker image"
@@ -28,10 +30,22 @@ if [ $# -lt 2 ]; then
 fi
 
 TARGET="$1"
-DOCKER_IMAGE="smite-${TARGET}-coverage"
+SCENARIO="$2"
+
+# Validate target.
+case "$TARGET" in
+    lnd|cln|ldk|eclair) ;;
+    *)
+        echo "Error: Unknown target '$TARGET'. Must be one of: lnd, cln, ldk, eclair"
+        exit 1
+        ;;
+esac
+
+# Docker image tag uses dashes (convention), scenario binary is per-target.
+DOCKER_IMAGE="smite-${TARGET}-${SCENARIO}-coverage"
 SCENARIO_BIN="/${TARGET}-scenario"
 
-# Validate target and set coverage environment variables for docker run.
+# Set coverage environment variables for docker run.
 # All targets mount their per-input coverage directory at /covdata inside the
 # container. The coverage tool writes to /covdata using its native format:
 #   LND:    Go coverage -> /covdata/covcounters.* (GOCOVERDIR)
@@ -40,19 +54,15 @@ SCENARIO_BIN="/${TARGET}-scenario"
 #   Eclair: JaCoCo exec -> /covdata/jacoco.exec (baked into Dockerfile)
 COV_ENV=()
 case "$TARGET" in
-    lnd)        COV_ENV=(-e GOCOVERDIR=/covdata) ;;
-    cln|ldk)    COV_ENV=(-e LLVM_PROFILE_FILE="/covdata/coverage-%p_%m.profraw") ;;
-    eclair)     ;;
-    *)
-        echo "Error: Unknown target '$TARGET'. Must be one of: lnd, cln, ldk, eclair"
-        exit 1
-        ;;
+    lnd)     COV_ENV=(-e GOCOVERDIR=/covdata) ;;
+    cln|ldk) COV_ENV=(-e LLVM_PROFILE_FILE="/covdata/coverage-%p_%m.profraw") ;;
+    eclair)  ;;
 esac
 
 # Convert to absolute paths to prevent Docker from interpreting relative paths
 # as named volumes
-CORPUS_DIR="$(cd "$2" && pwd)"
-OUTPUT_DIR="${3:-./${TARGET}-coverage-report}"
+CORPUS_DIR="$(cd "$3" && pwd)"
+OUTPUT_DIR="${4:-./${TARGET}-${SCENARIO}-coverage-report}"
 OUTPUT_DIR="$(mkdir -p "$OUTPUT_DIR" && cd "$OUTPUT_DIR" && pwd)"
 
 # Validate PARALLEL
@@ -83,7 +93,9 @@ if [ "${REBUILD:-}" = "1" ] || ! docker image inspect "$DOCKER_IMAGE" >/dev/null
     SMITE_DIR="$(dirname "$SCRIPT_DIR")"
 
     echo "Building coverage Docker image..."
-    docker build -t "$DOCKER_IMAGE" -f "$SMITE_DIR/workloads/${TARGET}/Dockerfile.coverage" "$SMITE_DIR"
+    docker build -t "$DOCKER_IMAGE" \
+        --build-arg "SCENARIO=$SCENARIO" \
+        -f "$SMITE_DIR/workloads/${TARGET}/Dockerfile.coverage" "$SMITE_DIR"
 fi
 
 # Create output directories (remove old data to avoid mixing with previous runs)

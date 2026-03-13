@@ -4,6 +4,7 @@ FROM eclipse-temurin:21 AS builder
 # Build arguments
 ARG ECLAIR_VERSION=v0.13.1
 ARG BITCOIN_VERSION=29.2
+ARG SCENARIO
 
 # Install build dependencies.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -67,7 +68,7 @@ COPY smite/ smite/
 COPY smite-scenarios/ smite-scenarios/
 COPY smite-nyx-sys/ smite-nyx-sys/
 RUN TARGET_MAP_SIZE=$(cat /tmp/eclair-edge-count.txt) \
-    cargo build -p smite-scenarios --bin eclair --release --features nyx
+    cargo build -p smite-scenarios --bin eclair_${SCENARIO} --release --features nyx
 
 # Build JVM crash handler shared libraries, LD_PRELOADed into the JVM to
 # report crashes before atexit handlers close TCP sockets. Two variants:
@@ -80,6 +81,7 @@ RUN cc -shared -fPIC -DENABLE_NYX -DNO_PT_NYX \
 
 # Runtime image.
 FROM eclipse-temurin:21-jre
+ARG SCENARIO
 
 # Install curl for Eclair readiness polling in EclairTarget::query_info().
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -99,7 +101,7 @@ COPY --from=builder /usr/local/lib/libeclair-sancov.so /usr/local/lib/libeclair-
 
 # Copy crash handlers and eclair scenario binary
 COPY --from=builder /nyx-jvm-crash-handler.so /jvm-crash-handler.so /
-COPY --from=builder /smite/target/release/eclair /eclair-scenario
+COPY --from=builder /smite/target/release/eclair_${SCENARIO} /eclair-scenario
 
 # Default to the local crash handler; init.sh overrides with the Nyx version.
 ENV SMITE_CRASH_HANDLER=/jvm-crash-handler.so

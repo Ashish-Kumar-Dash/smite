@@ -21,11 +21,11 @@ Smite is a coverage-guided fuzzing framework for Lightning Network implementatio
 Choose a target (LND, LDK, CLN, or Eclair) and follow the steps below:
 
 ```bash
-# Build the Docker image
-docker build -t smite-lnd -f workloads/lnd/Dockerfile .  # for LND
-docker build -t smite-ldk -f workloads/ldk/Dockerfile .  # for LDK
-docker build -t smite-cln -f workloads/ldk/Dockerfile .  # for CLN
-docker build -t smite-eclair -f workloads/eclair/Dockerfile .  # for Eclair
+# Build the Docker image (SCENARIO selects which scenario binary to include)
+docker build -t smite-lnd -f workloads/lnd/Dockerfile --build-arg SCENARIO=encrypted_bytes .
+docker build -t smite-ldk -f workloads/ldk/Dockerfile --build-arg SCENARIO=encrypted_bytes .
+docker build -t smite-cln -f workloads/cln/Dockerfile --build-arg SCENARIO=encrypted_bytes .
+docker build -t smite-eclair -f workloads/eclair/Dockerfile --build-arg SCENARIO=encrypted_bytes .
 
 # Enable the KVM VMware backdoor (required for Nyx)
 ./scripts/enable-vmware-backdoor.sh
@@ -81,11 +81,11 @@ docker run --rm -v $PWD/crash:/input.bin -e SMITE_INPUT=/input.bin smite-eclair 
 Generate an HTML coverage report showing which parts of the target were exercised by a fuzzing corpus:
 
 ```bash
-# Generate coverage report from a fuzzing corpus (target: lnd, cln, ldk, eclair)
-./scripts/coverage-report.sh <target> /tmp/smite-out/default/queue/
+# Generate coverage report (target: lnd/cln/ldk/eclair)
+./scripts/coverage-report.sh <target> encrypted_bytes /tmp/smite-out/default/queue/
 
 # View the report
-firefox ./<target>-coverage-report/html/index.html
+firefox ./<target>-<scenario>-coverage-report/html/index.html
 ```
 
 ## Project Structure
@@ -102,6 +102,6 @@ workloads/
 scripts/
   setup-nyx.sh              # Helper to create Nyx sharedirs
   enable-vmware-backdoor.sh # Enable KVM VMware backdoor for Nyx
-  coverage-report.sh        # Generate a coverage report for any target
+  coverage-report.sh        # Generate a coverage report for any scenario
   symbolize-crash.sh        # Symbolize CLN crash report stack traces
 ```
