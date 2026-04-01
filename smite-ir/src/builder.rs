@@ -1,0 +1,171 @@
+//! Program builder for generators.
+//!
+//! `ProgramBuilder` maintains an instruction list and a type-indexed variable
+//! registry. Generators call builder methods to emit instructions -- they never
+//! manipulate instruction indices directly.
+
+use std::collections::HashMap;
+
+use rand::{Rng, RngExt};
+
+use super::{Instruction, Operation, Program, ProgramContext, VariableType};
+
+/// A candidate variable that can satisfy a type request.
+#[derive(Debug, Clone)]
+enum Candidate {
+    /// Variable at this instruction index is directly usable.
+    Direct(usize),
+    /// A field can be extracted from a compound variable.
+    Extract {
+        /// Instruction index of the compound variable.
+        compound_idx: usize,
+        /// The operation required to extract the field.
+        operation: Operation,
+    },
+}
+
+/// Builds an IR program by appending instructions and tracking available
+/// variables by type.
+pub struct ProgramBuilder {
+    instructions: Vec<Instruction>,
+    /// Candidate variables indexed by output type.
+    candidates: HashMap<VariableType, Vec<Candidate>>,
+}
+
+impl ProgramBuilder {
+    /// Creates an empty builder.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            instructions: Vec::new(),
+            candidates: HashMap::new(),
+        }
+    }
+
+    /// Appends an instruction and registers its output variable (if any) as a
+    /// candidate. Returns the instruction index.
+    pub fn append(&mut self, operation: Operation, inputs: &[usize]) -> usize {
+        let idx = self.instructions.len();
+
+        if let Some(out_type) = operation.output_type() {
+            // Register extractable fields for compound types.
+            for (extract_op, field_type) in operation.extractable_fields() {
+                self.candidates
+                    .entry(field_type)
+                    .or_default()
+                    .push(Candidate::Extract {
+                        compound_idx: idx,
+                        operation: extract_op,
+                    });
+            }
+
+            self.candidates
+                .entry(out_type)
+                .or_default()
+                .push(Candidate::Direct(idx));
+        }
+
+        self.instructions.push(Instruction {
+            operation,
+            inputs: inputs.to_vec(),
+        });
+
+        idx
+    }
+
+    /// Selects or creates a variable of the given type using probabilistic
+    /// variable selection (75% most recent, 15% any existing, 10% fresh).
+    #[allow(clippy::missing_panics_doc)] // candidates is always non-empty
+    pub fn pick_variable(&mut self, var_type: VariableType, rng: &mut impl Rng) -> usize {
+        let Some(candidates) = self.candidates.get(&var_type) else {
+            return self.generate_fresh(var_type, rng);
+        };
+
+        let roll = rng.random_range(0..20);
+        match roll {
+            // 10%: generate a fresh value even though candidates exist.
+            0..=1 => self.generate_fresh(var_type, rng),
+            // 15%: pick any existing candidate.
+            2..=4 => {
+                let i = rng.random_range(0..candidates.len());
+                let candidate = candidates[i].clone();
+                self.resolve_candidate(candidate)
+            }
+            // 75%: pick the most recent candidate.
+            _ => {
+                let candidate = candidates.last().expect("non-empty").clone();
+                self.resolve_candidate(candidate)
+            }
+        }
+    }
+
+    /// Emits instructions that produce a fresh value of the given type.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `var_type` is `Message` (requires composed inputs) or
+    /// `AcceptChannel` (requires protocol interaction).
+    pub fn generate_fresh(&mut self, var_type: VariableType, rng: &mut impl Rng) -> usize {
+        match var_type {
+            VariableType::Amount => self.append(Operation::LoadAmount(rng.random()), &[]),
+            VariableType::FeeratePerKw => {
+                self.append(Operation::LoadFeeratePerKw(rng.random()), &[])
+            }
+            VariableType::BlockHeight => self.append(Operation::LoadBlockHeight(rng.random()), &[]),
+            VariableType::U16 => self.append(Operation::LoadU16(rng.random()), &[]),
+            VariableType::U8 => self.append(Operation::LoadU8(rng.random()), &[]),
+            VariableType::Bytes => {
+                let len = rng.random_range(0..=256);
+                let mut bytes = vec![0u8; len];
+                rng.fill(&mut bytes[..]);
+                self.append(Operation::LoadBytes(bytes), &[])
+            }
+            VariableType::Features => {
+                let len = rng.random_range(0..=16);
+                let mut bytes = vec![0u8; len];
+                rng.fill(&mut bytes[..]);
+                self.append(Operation::LoadFeatures(bytes), &[])
+            }
+            VariableType::PrivateKey => self.append(Operation::LoadPrivateKey(rng.random()), &[]),
+            VariableType::ChannelId => self.append(Operation::LoadChannelId(rng.random()), &[]),
+            VariableType::ChainHash => self.append(Operation::LoadChainHashFromContext, &[]),
+            VariableType::Point => {
+                let sk_idx = self.generate_fresh(VariableType::PrivateKey, rng);
+                self.append(Operation::DerivePoint, &[sk_idx])
+            }
+            VariableType::Message => {
+                panic!("cannot generate fresh Message: requires composed inputs")
+            }
+            VariableType::AcceptChannel => {
+                panic!("cannot generate fresh AcceptChannel: requires protocol interaction")
+            }
+        }
+    }
+
+    /// Builds the final program from the accumulated instructions.
+    #[must_use]
+    pub fn build(self, context: ProgramContext) -> Program {
+        Program {
+            instructions: self.instructions,
+            context,
+        }
+    }
+
+    /// Resolves a candidate to a variable index, inserting an Extract
+    /// instruction if needed.
+    fn resolve_candidate(&mut self, candidate: Candidate) -> usize {
+        match candidate {
+            Candidate::Direct(idx) => idx,
+            Candidate::Extract {
+                compound_idx,
+                operation,
+            } => self.append(operation, &[compound_idx]),
+        }
+    }
+}
+
+impl Default for ProgramBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
