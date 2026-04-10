@@ -35,10 +35,11 @@ impl ScenarioError {
     #[must_use]
     pub fn is_timeout(&self) -> bool {
         use std::io::ErrorKind;
-        if let Self::Connection(ConnectionError::Io(e)) = self {
-            matches!(e.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock)
-        } else {
-            false
+        match self {
+            Self::Connection(ConnectionError::Io(e)) | Self::Target(TargetError::Io(e)) => {
+                matches!(e.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock)
+            }
+            _ => false,
         }
     }
 }
@@ -141,4 +142,29 @@ pub fn smite_run<S: Scenario>() -> std::process::ExitCode {
     drop(runner);
 
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ScenarioError;
+    use crate::{noise::ConnectionError, scenarios::TargetError};
+    use std::io::{Error, ErrorKind};
+
+    fn assert_is_timeout(kind: ErrorKind, expected: bool) {
+        let actual =
+            ScenarioError::Connection(ConnectionError::Io(Error::new(kind, "test"))).is_timeout();
+        assert_eq!(actual, expected, "ConnectionError::Io with kind {kind:?}");
+        let actual = ScenarioError::Target(TargetError::Io(Error::new(kind, "test"))).is_timeout();
+        assert_eq!(actual, expected, "TargetError::Io with kind {kind:?}");
+    }
+
+    #[test]
+    fn is_timeout() {
+        for kind in [ErrorKind::TimedOut, ErrorKind::WouldBlock] {
+            assert_is_timeout(kind, true);
+        }
+        // everything else should return false, but it's hard to test
+        // "everything else", so we just test one other kind
+        assert_is_timeout(ErrorKind::ConnectionRefused, false);
+    }
 }
