@@ -480,16 +480,6 @@ mod tests {
     }
 
     #[test]
-    fn message_gossip_timestamp_filter_roundtrip() {
-        let chain_hash = [0x6f; 32];
-        let filter = GossipTimestampFilter::new(chain_hash, 1_000_000, 86400);
-        let msg = Message::GossipTimestampFilter(filter.clone());
-        let encoded = msg.encode();
-        let decoded = Message::decode(&encoded).unwrap();
-        assert_eq!(decoded, Message::GossipTimestampFilter(filter));
-    }
-
-    #[test]
     fn message_shutdown_roundtrip() {
         let shutdown = Shutdown::for_channel(ChannelId::default(), vec![0x00, 0x14, 0xab, 0xcd]);
         let msg = Message::Shutdown(shutdown.clone());
@@ -579,6 +569,16 @@ mod tests {
         let encoded = msg.encode();
         let decoded = Message::decode(&encoded).unwrap();
         assert_eq!(decoded, Message::TxAbort(tx_abort));
+    }
+
+    #[test]
+    fn message_gossip_timestamp_filter_roundtrip() {
+        let chain_hash = [0x6f; 32];
+        let filter = GossipTimestampFilter::new(chain_hash, 1_000_000, 86400);
+        let msg = Message::GossipTimestampFilter(filter.clone());
+        let encoded = msg.encode();
+        let decoded = Message::decode(&encoded).unwrap();
+        assert_eq!(decoded, Message::GossipTimestampFilter(filter));
     }
 
     #[test]
