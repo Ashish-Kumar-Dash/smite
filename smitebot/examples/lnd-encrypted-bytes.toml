@@ -1,0 +1,21 @@
+# Sample smitebot campaign configuration for fuzzing LND with the
+# encrypted_bytes scenario on 8 cores.
+
+# Target Lightning implementation (lnd, ldk, cln, eclair).
+target = "lnd"
+# Fuzzing scenario.
+scenario = "encrypted_bytes"
+# Path to AFL++ source tree.
+aflpp_path = "/home/user/AFLplusplus"
+# Path to smite repository root.
+smite_dir = "."
+# Number of parallel AFL++ instances to launch.
+runners = 8
+# Seed corpus directory.
+seed_dir = "/tmp/smite-seeds"
+# AFL++ output directory.
+output_dir = "/tmp/smite-out"
+# Nyx sharedir created by setup-nyx.sh.
+sharedir = "/tmp/smite-nyx"
+# Docker image tag override (default: smite-<target>-<scenario>).
+# image = "smite-lnd-encrypted_bytes"
