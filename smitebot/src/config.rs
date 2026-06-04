@@ -1,5 +1,6 @@
 //! Campaign configuration file parsing and validation.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -28,6 +29,12 @@ pub struct CampaignConfig {
     pub sharedir: PathBuf,
     /// Docker image tag override; derived from target and scenario when absent.
     pub image: Option<String>,
+    /// Extra environment variables passed to AFL++ instances.
+    #[serde(default)]
+    pub afl_env: HashMap<String, String>,
+    /// Extra CLI flags appended to the `afl-fuzz` command.
+    #[serde(default)]
+    pub afl_flags: Vec<String>,
 }
 
 /// Lightning Network implementation to target.
@@ -245,6 +252,31 @@ sharedir = "/tmp/smite-nyx"
             let config = CampaignConfig::load(&path).unwrap();
             assert_eq!(config.target.to_string(), target);
         }
+    }
+
+    #[test]
+    fn load_defaults_afl_env_and_flags_to_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_config(dir.path(), VALID_CONFIG);
+
+        let config = CampaignConfig::load(&path).unwrap();
+
+        assert!(config.afl_env.is_empty());
+        assert!(config.afl_flags.is_empty());
+    }
+
+    #[test]
+    fn load_parses_afl_env_and_flags() {
+        let dir = tempfile::tempdir().unwrap();
+        let content = format!(
+            "{VALID_CONFIG}\nafl_flags = [\"-t\", \"1000+\"]\n\n[afl_env]\nAFL_KEEP_TIMEOUTS = \"1\"\n"
+        );
+        let path = write_config(dir.path(), &content);
+
+        let config = CampaignConfig::load(&path).unwrap();
+
+        assert_eq!(config.afl_env.get("AFL_KEEP_TIMEOUTS").unwrap(), "1");
+        assert_eq!(config.afl_flags, vec!["-t", "1000+"]);
     }
 
     #[test]

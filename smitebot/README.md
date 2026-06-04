@@ -32,6 +32,8 @@ Campaign settings are stored in a TOML file. See [`examples/lnd-encrypted-bytes.
 | `output_dir` | yes | AFL++ output directory for findings and stats. |
 | `sharedir` | yes | Nyx shared directory created by `setup-nyx.sh`. |
 | `image` | no | Docker image tag override; defaults to `smite-<target>-<scenario>`. |
+| `afl_env` | no | Extra environment variables passed to AFL++ instances. |
+| `afl_flags` | no | Extra CLI flags appended to `afl-fuzz`. |
 
 ## Commands
 

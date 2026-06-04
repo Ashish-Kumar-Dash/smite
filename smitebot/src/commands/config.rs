@@ -30,6 +30,12 @@ impl ConfigCommand {
                 log::info!("output_dir: {}", config.output_dir.display());
                 log::info!("sharedir:   {}", config.sharedir.display());
                 log::info!("image:      {}", config.image_tag());
+                for (key, val) in &config.afl_env {
+                    log::info!("afl_env:    {key}={val}");
+                }
+                for flag in &config.afl_flags {
+                    log::info!("afl_flag:   {flag}");
+                }
                 true
             }
             Err(e) => {
