@@ -68,13 +68,11 @@ pub enum ConfigError {
     #[error("failed to read {}: {source}", path.display())]
     Read {
         path: PathBuf,
-        #[source]
         source: std::io::Error,
     },
     #[error("failed to parse {}: {source}", path.display())]
     Parse {
         path: PathBuf,
-        #[source]
         source: toml::de::Error,
     },
     #[error("runners must be at least 1")]
