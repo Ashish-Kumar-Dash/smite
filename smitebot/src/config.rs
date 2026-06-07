@@ -5,6 +5,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use clap::ValueEnum;
 use serde::Deserialize;
 
 /// A parsed and validated smitebot campaign configuration.
@@ -38,7 +39,7 @@ pub struct CampaignConfig {
 }
 
 /// Lightning Network implementation to target.
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum Target {
     /// Lightning Network Daemon.
@@ -80,6 +81,8 @@ pub enum ConfigError {
     InvalidRunners,
     #[error("scenario must not be empty")]
     EmptyScenario,
+    #[error("image must not be empty when specified")]
+    EmptyImage,
 }
 
 impl CampaignConfig {
@@ -111,6 +114,9 @@ impl CampaignConfig {
         }
         if self.scenario.is_empty() {
             return Err(ConfigError::EmptyScenario);
+        }
+        if self.image.as_ref().is_some_and(String::is_empty) {
+            return Err(ConfigError::EmptyImage);
         }
         Ok(())
     }
@@ -252,6 +258,16 @@ sharedir = "/tmp/smite-nyx"
             let config = CampaignConfig::load(&path).unwrap();
             assert_eq!(config.target.to_string(), target);
         }
+    }
+
+    #[test]
+    fn load_rejects_empty_image() {
+        let dir = tempfile::tempdir().unwrap();
+        let content = format!("{VALID_CONFIG}image = \"\"\n");
+        let path = write_config(dir.path(), &content);
+
+        let err = CampaignConfig::load(&path).unwrap_err();
+        assert!(matches!(err, ConfigError::EmptyImage));
     }
 
     #[test]

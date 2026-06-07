@@ -19,21 +19,21 @@ smitebot doctor --aflpp-path ~/AFLplusplus --json
 
 ## Configuration
 
-Campaign settings are stored in a TOML file. See [`examples/lnd-encrypted-bytes.toml`](examples/lnd-encrypted-bytes.toml) for a complete example.
+Campaign settings are stored in a TOML file. See [`sample-campaign.toml`](sample-campaign.toml) for a complete example.
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `target` | yes | Lightning implementation to fuzz (`lnd`, `cln`, `ldk`, or `eclair`). |
-| `scenario` | yes | Scenario binary selected by the workload Dockerfile. |
-| `aflpp_path` | yes | Path to the AFL++ source tree. |
-| `smite_dir` | yes | Path to the smite repository root. |
-| `runners` | yes | Number of parallel AFL++ instances to launch (must be at least 1). |
-| `seed_dir` | yes | Directory containing seed inputs for the fuzzing corpus. |
-| `output_dir` | yes | AFL++ output directory for findings and stats. |
-| `sharedir` | yes | Nyx shared directory created by `setup-nyx.sh`. |
-| `image` | no | Docker image tag override; defaults to `smite-<target>-<scenario>`. |
-| `afl_env` | no | Extra environment variables passed to AFL++ instances. |
-| `afl_flags` | no | Extra CLI flags appended to `afl-fuzz`. |
+| Field        | Required | Description                                                          |
+| ------------ | -------- | -------------------------------------------------------------------- |
+| `target`     | yes      | Lightning implementation to fuzz (`lnd`, `cln`, `ldk`, or `eclair`). |
+| `scenario`   | yes      | Scenario binary selected by the workload Dockerfile.                 |
+| `aflpp_path` | yes      | Path to the AFL++ source tree.                                       |
+| `smite_dir`  | yes      | Path to the smite repository root.                                   |
+| `runners`    | yes      | Number of parallel AFL++ instances to launch (must be at least 1).   |
+| `seed_dir`   | yes      | Directory containing seed inputs for the fuzzing corpus.             |
+| `output_dir` | yes      | AFL++ output directory for findings and stats.                       |
+| `sharedir`   | yes      | Nyx shared directory created by `setup-nyx.sh`.                      |
+| `image`      | no       | Docker image tag override; defaults to `smite-<target>-<scenario>`.  |
+| `afl_env`    | no       | Extra environment variables passed to AFL++ instances.               |
+| `afl_flags`  | no       | Extra CLI flags appended to `afl-fuzz`.                              |
 
 ## Commands
 
