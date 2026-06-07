@@ -39,10 +39,10 @@ Campaign settings are stored in a TOML file. See [`sample-campaign.toml`](sample
 
 ### smitebot config
 
-`smitebot config` validates a campaign configuration file and reports the resolved settings.
+`smitebot config` is an optional validation command that checks a campaign configuration file and reports the resolved settings. Useful for catching errors before launching a campaign.
 
 ```bash
-smitebot config examples/lnd-encrypted-bytes.toml
+smitebot config sample-campaign.toml
 ```
 
 ### smitebot build
