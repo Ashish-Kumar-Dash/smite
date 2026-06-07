@@ -181,10 +181,7 @@ mod tests {
             (Target::Lnd, "/repo/smite/workloads/lnd/Dockerfile"),
             (Target::Cln, "/repo/smite/workloads/cln/Dockerfile"),
             (Target::Ldk, "/repo/smite/workloads/ldk/Dockerfile"),
-            (
-                Target::Eclair,
-                "/repo/smite/workloads/eclair/Dockerfile",
-            ),
+            (Target::Eclair, "/repo/smite/workloads/eclair/Dockerfile"),
         ];
 
         for (target, expected_dockerfile) in cases {
