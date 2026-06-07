@@ -1,5 +1,4 @@
-# Sample smitebot campaign configuration for fuzzing LND with the
-# encrypted_bytes scenario on 8 cores.
+# Sample smitebot campaign configuration for fuzzing LND with the encrypted_bytes scenario on 8 cores.
 
 # Target Lightning implementation (lnd, ldk, cln, eclair).
 target = "lnd"
