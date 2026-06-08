@@ -9,7 +9,9 @@ workspace = true
 
 [dependencies]
 clap = { version = "4.6", features = ["derive"] }
+dirs = "6"
 log.workspace = true
+nix = { version = "0.30", default-features = false, features = ["signal", "process"] }
 toml = "0.8"
 serde.workspace = true
 serde_json.workspace = true
