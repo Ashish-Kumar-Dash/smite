@@ -1,12 +1,12 @@
 //! Docker image builds for Smite workloads.
 //! The command keeps Docker's output visible so rebuild failures are easy to debug.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 
 use clap::Args;
 
-use crate::config::Target;
+use crate::config::{CampaignConfig, Target};
 
 /// Command handler for `smitebot build`.
 pub struct BuildCommand;
@@ -14,12 +14,15 @@ pub struct BuildCommand;
 /// CLI arguments for `smitebot build`.
 #[derive(Debug, Args)]
 pub struct BuildArgs {
+    /// Campaign configuration file. When provided, `target`, `scenario`, and
+    /// `smite_dir` are read from the config instead of requiring CLI flags.
+    config: Option<PathBuf>,
     /// Target implementation to build.
     #[arg(long)]
-    target: Target,
+    target: Option<Target>,
     /// Scenario binary selected by the workload Dockerfile.
     #[arg(long)]
-    scenario: String,
+    scenario: Option<String>,
     /// Build the coverage-instrumented Docker image.
     #[arg(long)]
     coverage: bool,
@@ -51,7 +54,7 @@ pub(crate) struct BuildInputs {
 
 impl BuildInputs {
     /// Resolves Docker build inputs from a campaign configuration.
-    pub(crate) fn from_config(config: &crate::config::CampaignConfig, image: &str) -> Self {
+    pub(crate) fn from_config(config: &CampaignConfig, image: &str) -> Self {
         Self {
             image: image.to_string(),
             dockerfile: config
@@ -65,8 +68,8 @@ impl BuildInputs {
         }
     }
 
-    /// Resolves Docker build inputs from parsed CLI arguments.
-    fn from_args(args: &BuildArgs) -> Self {
+    /// Resolves Docker build inputs from CLI arguments.
+    fn from_resolved(target: Target, scenario: &str, smite_dir: &Path, args: &BuildArgs) -> Self {
         let dockerfile_name = if args.coverage {
             "Dockerfile.coverage"
         } else {
@@ -74,16 +77,16 @@ impl BuildInputs {
         };
 
         Self {
-            image: args.image.clone().unwrap_or_else(|| {
-                default_workload_image_tag(args.target, &args.scenario, args.coverage)
-            }),
-            dockerfile: args
-                .smite_dir
+            image: args
+                .image
+                .clone()
+                .unwrap_or_else(|| default_workload_image_tag(target, scenario, args.coverage)),
+            dockerfile: smite_dir
                 .join("workloads")
-                .join(args.target.to_string())
+                .join(target.to_string())
                 .join(dockerfile_name),
-            smite_dir: args.smite_dir.clone(),
-            scenario: args.scenario.clone(),
+            smite_dir: smite_dir.to_path_buf(),
+            scenario: scenario.to_string(),
             no_cache: args.no_cache,
         }
     }
@@ -92,7 +95,35 @@ impl BuildInputs {
 impl BuildCommand {
     /// Builds the requested Smite Docker image and returns whether Docker succeeded.
     pub fn execute(args: &BuildArgs) -> bool {
-        let inputs = BuildInputs::from_args(args);
+        let config = args.config.as_ref().map(|p| CampaignConfig::load(p));
+        if let Some(Err(e)) = &config {
+            log::error!("{e}");
+            return false;
+        }
+        let config = config.map(|r| r.unwrap());
+
+        let target = match (&args.target, &config) {
+            (Some(t), _) => *t,
+            (None, Some(c)) => c.target,
+            (None, None) => {
+                log::error!("--target is required (or provide a campaign config file)");
+                return false;
+            }
+        };
+        let scenario = match (&args.scenario, &config) {
+            (Some(s), _) => s.clone(),
+            (None, Some(c)) => c.scenario.clone(),
+            (None, None) => {
+                log::error!("--scenario is required (or provide a campaign config file)");
+                return false;
+            }
+        };
+        let smite_dir = match &config {
+            Some(c) => c.smite_dir.clone(),
+            None => args.smite_dir.clone(),
+        };
+
+        let inputs = BuildInputs::from_resolved(target, &scenario, &smite_dir, args);
         log::info!(
             "building {} with {}",
             inputs.image,
@@ -160,13 +191,23 @@ mod tests {
 
     fn sample_build_args(target: Target, scenario: &str) -> BuildArgs {
         BuildArgs {
-            target,
-            scenario: scenario.to_string(),
+            config: None,
+            target: Some(target),
+            scenario: Some(scenario.to_string()),
             coverage: false,
             image: None,
             smite_dir: PathBuf::from("/repo/smite"),
             no_cache: false,
         }
+    }
+
+    fn resolved_inputs(args: &BuildArgs) -> BuildInputs {
+        BuildInputs::from_resolved(
+            args.target.unwrap(),
+            args.scenario.as_deref().unwrap(),
+            &args.smite_dir,
+            args,
+        )
     }
 
     #[test]
@@ -184,7 +225,7 @@ mod tests {
     #[test]
     fn build_inputs_use_normal_dockerfile_by_default() {
         let args = sample_build_args(Target::Ldk, "init");
-        let inputs = BuildInputs::from_args(&args);
+        let inputs = resolved_inputs(&args);
 
         assert_eq!(inputs.image, "smite-ldk-init");
         assert_eq!(
@@ -207,7 +248,7 @@ mod tests {
 
         for (target, expected_dockerfile) in cases {
             let args = sample_build_args(target, "noise");
-            let inputs = BuildInputs::from_args(&args);
+            let inputs = resolved_inputs(&args);
 
             assert_eq!(inputs.dockerfile, Path::new(expected_dockerfile));
         }
@@ -220,7 +261,7 @@ mod tests {
         args.image = Some("local/eclair-eb:debug".to_string());
         args.no_cache = true;
 
-        let inputs = BuildInputs::from_args(&args);
+        let inputs = resolved_inputs(&args);
 
         assert_eq!(inputs.image, "local/eclair-eb:debug");
         assert_eq!(
@@ -235,7 +276,7 @@ mod tests {
         let mut args = sample_build_args(Target::Cln, "noise");
         args.coverage = true;
 
-        let inputs = BuildInputs::from_args(&args);
+        let inputs = resolved_inputs(&args);
 
         assert_eq!(inputs.image, "smite-cln-noise-coverage");
         assert_eq!(
@@ -249,7 +290,7 @@ mod tests {
         let mut args = sample_build_args(Target::Lnd, "encrypted_bytes");
         args.smite_dir = PathBuf::from("/tmp/local-smite");
 
-        let inputs = BuildInputs::from_args(&args);
+        let inputs = resolved_inputs(&args);
 
         assert_eq!(inputs.smite_dir, Path::new("/tmp/local-smite"));
         assert_eq!(

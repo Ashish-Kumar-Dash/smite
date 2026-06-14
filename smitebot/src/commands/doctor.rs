@@ -9,6 +9,7 @@ use std::process::{Command, Output};
 use clap::Args;
 use serde::Serialize;
 
+use crate::config::CampaignConfig;
 use crate::utils::{find_in_path, is_executable};
 
 /// AFL++ binaries required for campaign execution and corpus minimization.
@@ -43,12 +44,15 @@ pub struct DoctorCommand;
 /// CLI arguments for `smitebot doctor`.
 #[derive(Debug, Args)]
 pub struct DoctorArgs {
+    /// Campaign configuration file. When provided, `aflpp_path` and `smite_dir`
+    /// are read from the config instead of requiring CLI flags.
+    config: Option<PathBuf>,
     /// Emit machine-readable JSON output.
     #[arg(long)]
     json: bool,
     /// Path to AFL++ source tree used for fuzzing.
     #[arg(long)]
-    aflpp_path: PathBuf,
+    aflpp_path: Option<PathBuf>,
     /// Path to smite repository root.
     #[arg(long, default_value = ".")]
     smite_dir: PathBuf,
@@ -127,8 +131,28 @@ impl Serialize for CheckFailure {
 impl DoctorCommand {
     /// Runs all doctor checks and prints either human-readable or JSON output.
     pub fn execute(args: &DoctorArgs) -> bool {
-        let aflpp_root = args.aflpp_path.as_path();
-        let smite_dir = &args.smite_dir;
+        let config = args.config.as_ref().map(|p| CampaignConfig::load(p));
+        if let Some(Err(e)) = &config {
+            log::error!("{e}");
+            return false;
+        }
+        let config = config.map(|r| r.unwrap());
+
+        let aflpp_path = match (&args.aflpp_path, &config) {
+            (Some(p), _) => p.clone(),
+            (None, Some(c)) => c.aflpp_path.clone(),
+            (None, None) => {
+                log::error!("--aflpp-path is required (or provide a campaign config file)");
+                return false;
+            }
+        };
+        let smite_dir = match &config {
+            Some(c) => c.smite_dir.clone(),
+            None => args.smite_dir.clone(),
+        };
+
+        let aflpp_root = aflpp_path.as_path();
+        let smite_dir = &smite_dir;
 
         // Keep a predictable order for operator readability and stable JSON output.
         let mut checks = vec![

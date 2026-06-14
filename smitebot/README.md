@@ -13,6 +13,7 @@ cargo install --path smitebot
 After install, run it directly:
 
 ```bash
+smitebot doctor campaign.toml
 smitebot doctor --aflpp-path ~/AFLplusplus
 smitebot doctor --aflpp-path ~/AFLplusplus --json
 ```
@@ -62,6 +63,8 @@ smitebot config sample-campaign.toml
 `smitebot build` builds Smite workload Docker images for manual rebuilds and debugging.
 
 ```bash
+smitebot build campaign.toml
+smitebot build campaign.toml --coverage --no-cache
 smitebot build --target lnd --scenario encrypted_bytes
 smitebot build --target cln --scenario noise --coverage
 smitebot build --target ldk --scenario init --image local/ldk-init:debug --no-cache
@@ -88,9 +91,13 @@ smite-<target>-<scenario>-coverage
 `smitebot doctor` validates host prerequisites before running Smite campaigns.
 
 ```bash
+smitebot doctor campaign.toml
+smitebot doctor campaign.toml --json
 smitebot doctor --aflpp-path ~/AFLplusplus --smite-dir .
 smitebot doctor --aflpp-path ~/AFLplusplus --smite-dir . --json
 ```
+
+When a campaign config file is provided, `aflpp_path` and `smite_dir` are read from it. CLI flags override config values when both are specified.
 
 ## Checks
 
