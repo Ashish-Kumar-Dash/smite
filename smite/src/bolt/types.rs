@@ -143,6 +143,24 @@ impl fmt::Display for ShortChannelId {
     }
 }
 
+/// A BOLT 1 truncated 32-bit integer (`tu32`).
+///
+/// Its width is only recoverable from the enclosing TLV record, so `read`
+/// consumes every remaining byte. Decode one only from a slice already
+/// narrowed to the TLV value it ends, never from a cursor running over a
+/// message body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
+pub struct Tu32(pub u32);
+
+/// A BOLT 1 truncated 64-bit integer (`tu64`).
+///
+/// Its width is only recoverable from the enclosing TLV record, so `read`
+/// consumes every remaining byte. Decode one only from a slice already
+/// narrowed to the TLV value it ends, never from a cursor running over a
+/// message body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
+pub struct Tu64(pub u64);
+
 /// A variable-length unsigned integer similar to Bitcoin's `CompactSize`
 /// encoding, but big-endian.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

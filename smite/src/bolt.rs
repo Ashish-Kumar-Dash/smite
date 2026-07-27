@@ -70,7 +70,7 @@ pub use tx_remove_output::TxRemoveOutput;
 pub use types::{
     BigSize, CHANNEL_ID_SIZE, COMPACT_SIGNATURE_SIZE, ChannelId, MAX_MESSAGE_SIZE,
     PAYMENT_ONION_PACKET_SIZE, PUBLIC_KEY_SIZE, SHA256_HASH_SIZE, SHORT_CHANNEL_ID_SIZE,
-    ShortChannelId, TXID_SIZE,
+    ShortChannelId, TXID_SIZE, Tu32, Tu64,
 };
 pub use update_add_htlc::{UpdateAddHtlc, UpdateAddHtlcTlvs};
 pub use update_fail_htlc::{UpdateFailHtlc, UpdateFailHtlcTlvs};
@@ -103,6 +103,14 @@ pub enum BoltError {
     /// `BigSize` truncated (unexpected EOF)
     #[error("BIGSIZE_TRUNCATED")]
     BigSizeTruncated,
+
+    // Truncated integer errors
+    /// Truncated integer (`tu32`/`tu64`) wider than its maximum encoding
+    #[error("TRUNCATED_INT_TOO_LONG max {max} got {actual}")]
+    TruncatedIntTooLong { max: usize, actual: usize },
+    /// Truncated integer (`tu32`/`tu64`) has a leading zero byte
+    #[error("TRUNCATED_INT_NOT_MINIMAL")]
+    TruncatedIntNotMinimal,
 
     // TLV errors
     /// TLV type not in strictly increasing order
