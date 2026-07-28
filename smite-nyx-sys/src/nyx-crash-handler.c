@@ -34,6 +34,8 @@
 #include "nyx.h"
 #endif
 
+// Must match PANIC_LOG_PATH in workloads/ldk/src/main.rs.
+#define PANIC_LOG_PATH "/tmp/smite-panic.log"
 #define ASAN_LOG_PATH "/tmp/asan.log"
 #define MAX_CUSTOM_BACKTRACE_SIZE 50
 
@@ -58,11 +60,11 @@ void append_log(const char *msg) {
   strcat(log, msg);
 }
 
-// Fetch the ASan log from the log file and append it to the global log
-void append_asan_log() {
+// Fetch a report the target left behind at "<path>.<pid>" and append it to the
+// global log
+void append_target_log(const char *path) {
   char log_file_path[256];
-  snprintf(log_file_path, sizeof(log_file_path), "%s.%d", ASAN_LOG_PATH,
-           getpid());
+  snprintf(log_file_path, sizeof(log_file_path), "%s.%d", path, getpid());
 
   FILE *file = fopen(log_file_path, "r");
 
@@ -121,7 +123,8 @@ void panic_with_backtrace(const char *extra_msg) {
     append_log("\n");
   }
 
-  append_asan_log();
+  append_target_log(PANIC_LOG_PATH);
+  append_target_log(ASAN_LOG_PATH);
 
 #ifdef CUSTOM_BACKTRACE
   char custom_backtrace[0x10000];

@@ -27,7 +27,27 @@ extern "C" fn handle_block(_: libc::c_int) {
     NEW_BLOCK.store(true, Ordering::SeqCst);
 }
 
+/// Path prefix the crash handler reads panic reports from.
+const PANIC_LOG_PATH: &str = "/tmp/smite-panic.log";
+
+/// Stores the panic message where the LD_PRELOADed crash handler can retrieve
+/// it. With `panic = "abort"`, panics only reach stderr, which scenario/Nyx
+/// discards,so this allows crash reports to include the panic message and its
+/// source location.
+fn install_panic_hook() {
+    let path = format!("{PANIC_LOG_PATH}.{}", std::process::id());
+    let default_hook = std::panic::take_hook();
+
+    std::panic::set_hook(Box::new(move |info| {
+        // Renders as "panicked at <file>:<line>:<col>:\n<message>".
+        let _ = std::fs::write(&path, format!("{info}\n"));
+        default_hook(info);
+    }));
+}
+
 fn main() {
+    install_panic_hook();
+
     // Set up signal handlers for graceful shutdown
     unsafe {
         // Cast through pointer to satisfy Rust's function-to-integer cast rules
