@@ -37,9 +37,16 @@ Launches a fuzzing campaign. Builds the Docker image, sets up the Nyx sharedir, 
 smitebot start campaign.toml
 ```
 
-Each runner gets a deterministic strategy distribution:
-- Power schedule (`-p`): round-robin across `fast`, `explore`, `coe`, `lin`, `quad`, `exploit`, `rare`
-- `-a binary`: ~70% of secondary runners
+Each runner gets a deterministic strategy distribution. The primary runner (0)
+runs AFL++'s default schedule with no modifiers; secondaries carry the schedule
+and mutation modifiers below. The power schedule is round-robin by index; the
+remaining modifiers are spread across secondaries by a fixed hash of the runner
+index, so a given runner always draws the same flags:
+- Power schedule (`-p`, secondaries only): round-robin across `explore`, `fast`, `coe`, `lin`, `quad`, `exploit`, `rare`
+- `-a binary`: ~70% of secondaries (wire messages are binary; hints AFL++ to use binary mutation strategies)
+- `-P` (fixed mutation strategy): `explore` ~40% / `exploit` ~20% of secondaries
+- `-L 0` (MOpt mode): ~10% of secondaries; skipped when a custom mutator is set (incompatible with MOpt)
+- `-Z` (sequential queue selection): ~10% of secondaries
 - `AFL_DISABLE_TRIM`: ~60% of secondary runners
 - `AFL_FINAL_SYNC`: primary runner only
 - `AFL_IMPORT_FIRST`: enabled when runner count < 16
