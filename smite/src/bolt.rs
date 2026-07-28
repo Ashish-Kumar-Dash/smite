@@ -32,6 +32,7 @@ mod tx_init_rbf;
 mod tx_remove_input;
 mod tx_remove_output;
 mod types;
+mod update_add_htlc;
 mod update_fail_htlc;
 mod update_fail_malformed_htlc;
 mod update_fulfill_htlc;
@@ -67,9 +68,11 @@ pub use tx_init_rbf::{TxInitRbf, TxInitRbfTlvs};
 pub use tx_remove_input::TxRemoveInput;
 pub use tx_remove_output::TxRemoveOutput;
 pub use types::{
-    BigSize, CHANNEL_ID_SIZE, COMPACT_SIGNATURE_SIZE, ChannelId, MAX_MESSAGE_SIZE, PUBLIC_KEY_SIZE,
-    SHA256_HASH_SIZE, SHORT_CHANNEL_ID_SIZE, ShortChannelId, TXID_SIZE,
+    BigSize, CHANNEL_ID_SIZE, COMPACT_SIGNATURE_SIZE, ChannelId, MAX_MESSAGE_SIZE,
+    PAYMENT_ONION_PACKET_SIZE, PUBLIC_KEY_SIZE, SHA256_HASH_SIZE, SHORT_CHANNEL_ID_SIZE,
+    ShortChannelId, TXID_SIZE,
 };
+pub use update_add_htlc::{UpdateAddHtlc, UpdateAddHtlcTlvs};
 pub use update_fail_htlc::{UpdateFailHtlc, UpdateFailHtlcTlvs};
 pub use update_fail_malformed_htlc::UpdateFailMalformedHtlc;
 pub use update_fulfill_htlc::{UpdateFulfillHtlc, UpdateFulfillHtlcTlvs};
@@ -166,6 +169,8 @@ pub mod msg_type {
     pub const TX_ACK_RBF: u16 = 73;
     /// `tx_abort` message (BOLT 2).
     pub const TX_ABORT: u16 = 74;
+    /// `update_add_htlc` message (BOLT 2).
+    pub const UPDATE_ADD_HTLC: u16 = 128;
     /// `update_fulfill_htlc` message (BOLT 2).
     pub const UPDATE_FULFILL_HTLC: u16 = 130;
     /// `update_fail_htlc` message (BOLT 2).
@@ -232,6 +237,8 @@ pub enum Message {
     TxAckRbf(TxAckRbf),
     /// `tx_abort` message (type 74).
     TxAbort(TxAbort),
+    /// `update_add_htlc` message (type 128).
+    UpdateAddHtlc(UpdateAddHtlc),
     /// `update_fulfill_htlc` message (type 130).
     UpdateFulfillHtlc(UpdateFulfillHtlc),
     /// `update_fail_htlc` message (type 131).
@@ -287,6 +294,7 @@ impl Message {
             Self::TxInitRbf(_) => msg_type::TX_INIT_RBF,
             Self::TxAckRbf(_) => msg_type::TX_ACK_RBF,
             Self::TxAbort(_) => msg_type::TX_ABORT,
+            Self::UpdateAddHtlc(_) => msg_type::UPDATE_ADD_HTLC,
             Self::UpdateFulfillHtlc(_) => msg_type::UPDATE_FULFILL_HTLC,
             Self::UpdateFailHtlc(_) => msg_type::UPDATE_FAIL_HTLC,
             Self::UpdateFailMalformedHtlc(_) => msg_type::UPDATE_FAIL_MALFORMED_HTLC,
@@ -327,6 +335,7 @@ impl Message {
             Self::TxInitRbf(m) => out.extend(m.encode()),
             Self::TxAckRbf(m) => out.extend(m.encode()),
             Self::TxAbort(m) => out.extend(m.encode()),
+            Self::UpdateAddHtlc(m) => out.extend(m.encode()),
             Self::UpdateFulfillHtlc(m) => out.extend(m.encode()),
             Self::UpdateFailHtlc(m) => out.extend(m.encode()),
             Self::UpdateFailMalformedHtlc(m) => out.extend(m.encode()),
@@ -376,6 +385,7 @@ impl Message {
             msg_type::TX_INIT_RBF => Ok(Self::TxInitRbf(TxInitRbf::decode(cursor)?)),
             msg_type::TX_ACK_RBF => Ok(Self::TxAckRbf(TxAckRbf::decode(cursor)?)),
             msg_type::TX_ABORT => Ok(Self::TxAbort(TxAbort::decode(cursor)?)),
+            msg_type::UPDATE_ADD_HTLC => Ok(Self::UpdateAddHtlc(UpdateAddHtlc::decode(cursor)?)),
             msg_type::UPDATE_FULFILL_HTLC => {
                 Ok(Self::UpdateFulfillHtlc(UpdateFulfillHtlc::decode(cursor)?))
             }
@@ -852,6 +862,27 @@ mod tests {
         assert_eq!(decoded, Message::TxAbort(tx_abort));
     }
 
+    /// Valid `UpdateAddHtlc` message for testing.
+    fn sample_update_add_htlc() -> UpdateAddHtlc {
+        UpdateAddHtlc {
+            channel_id: ChannelId::new([0xaa; CHANNEL_ID_SIZE]),
+            id: 42,
+            amount_msat: 1_000_000,
+            payment_hash: [0x00; SHA256_HASH_SIZE],
+            cltv_expiry: 500,
+            onion_routing_packet: [0xbb; PAYMENT_ONION_PACKET_SIZE],
+            tlvs: UpdateAddHtlcTlvs::default(),
+        }
+    }
+
+    #[test]
+    fn message_update_add_htlc_roundtrip() {
+        let msg = sample_update_add_htlc();
+        let encoded = Message::UpdateAddHtlc(msg.clone()).encode();
+        let decoded = Message::decode(&encoded).unwrap();
+        assert_eq!(decoded, Message::UpdateAddHtlc(msg));
+    }
+
     #[test]
     fn message_update_fulfill_htlc_roundtrip() {
         let msg = UpdateFulfillHtlc {
@@ -1131,6 +1162,10 @@ mod tests {
         assert_eq!(
             Message::TxAbort(TxAbort::new(ChannelId::new([0; CHANNEL_ID_SIZE]), "")).msg_type(),
             msg_type::TX_ABORT
+        );
+        assert_eq!(
+            Message::UpdateAddHtlc(sample_update_add_htlc()).msg_type(),
+            msg_type::UPDATE_ADD_HTLC
         );
         assert_eq!(
             Message::UpdateFulfillHtlc(UpdateFulfillHtlc {

@@ -28,6 +28,9 @@ pub const PUBLIC_KEY_SIZE: usize = 33;
 /// Size of an encoded `short_channel_id` in bytes.
 pub const SHORT_CHANNEL_ID_SIZE: usize = 8;
 
+/// Size of payment onion routing packets in bytes.
+pub const PAYMENT_ONION_PACKET_SIZE: usize = 1366;
+
 /// A 32-byte channel identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 pub struct ChannelId(pub [u8; CHANNEL_ID_SIZE]);
