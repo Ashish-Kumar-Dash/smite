@@ -207,6 +207,13 @@ pub enum Operation {
         /// If `false`, the TLV is omitted and input 2 is ignored.
         include_alias: bool,
     },
+    /// Build and send a `shutdown` message (BOLT 2, type 38).
+    /// Produces a `SentShutdown` variable.
+    ///
+    /// Inputs (2):
+    ///   0: `channel_id`   (`ChannelId`)
+    ///   1: `scriptpubkey` (`Bytes`)
+    SendShutdown,
     /// Receive and parse an `accept_channel` response.
     /// Produces an `AcceptChannel` compound variable.
     RecvAcceptChannel,
@@ -702,6 +709,7 @@ impl fmt::Display for Operation {
             Self::SendChannelReady { include_alias } => {
                 write!(f, "SendChannelReady{{include_alias={include_alias}}}")
             }
+            Self::SendShutdown => write!(f, "SendShutdown"),
             Self::RecvAcceptChannel => write!(f, "RecvAcceptChannel"),
             Self::RecvFundingSigned => write!(f, "RecvFundingSigned"),
             Self::RecvChannelReady => write!(f, "RecvChannelReady()"),
@@ -747,6 +755,7 @@ impl Operation {
             | Self::BroadcastTransaction => None,
             Self::SendOpenChannel => Some(VariableType::SentOpenChannel),
             Self::SendFundingCreated => Some(VariableType::SentFundingCreated),
+            Self::SendShutdown => Some(VariableType::SentShutdown),
             Self::RecvAcceptChannel => Some(VariableType::AcceptChannel),
         }
     }
@@ -794,6 +803,10 @@ impl Operation {
                 VariableType::ChannelId,      // channel_id
                 VariableType::Point,          // second_per_commitment_point
                 VariableType::ShortChannelId, // short_channel_id (alias)
+            ],
+            Self::SendShutdown => vec![
+                VariableType::ChannelId, // channel_id
+                VariableType::Bytes,     // scriptpubkey
             ],
             Self::RecvAcceptChannel => vec![VariableType::SentOpenChannel],
             Self::RecvFundingSigned => vec![VariableType::SentFundingCreated],
@@ -904,6 +917,7 @@ impl Operation {
             | Self::SendOpenChannel
             | Self::SendFundingCreated
             | Self::SendChannelReady { .. }
+            | Self::SendShutdown
             | Self::RecvFundingSigned
             | Self::RecvChannelReady
             | Self::MineBlocks(_)
@@ -926,6 +940,7 @@ impl Operation {
             | Self::SendOpenChannel
             | Self::SendFundingCreated
             | Self::SendChannelReady { .. }
+            | Self::SendShutdown
             | Self::RecvAcceptChannel
             | Self::RecvFundingSigned
             | Self::RecvChannelReady
@@ -994,6 +1009,7 @@ impl Operation {
             | Self::SendMessage
             | Self::SendOpenChannel
             | Self::SendFundingCreated
+            | Self::SendShutdown
             | Self::RecvAcceptChannel
             | Self::RecvFundingSigned
             | Self::RecvChannelReady
