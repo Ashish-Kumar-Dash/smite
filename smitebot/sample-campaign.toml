@@ -27,6 +27,9 @@ sharedir = "/tmp/smite-nyx"
 # Docker image tag override (default: smite-<target>-<scenario>).
 # image = "smite-lnd-encrypted_bytes"
 
+# Custom tmux session name (default: campaign ID).
+# tmux_session = "my-lnd-campaign"
+
 # Extra environment variables passed to AFL++ instances.
 # [afl_env]
 # AFL_KEEP_TIMEOUTS = "1"
