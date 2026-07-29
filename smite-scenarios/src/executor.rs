@@ -21,7 +21,7 @@ use smite::pending_channel::PendingChannel;
 use smite::violation::Violation;
 use smite_ir::operation::AcceptChannelField;
 use smite_ir::{Operation, Program, Variable};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 /// The timeout used when receiving messages from the target. We will wait this
@@ -242,6 +242,12 @@ pub struct Executor<C, B> {
     /// transaction can change its raw hex, but the txid stays the same, so
     /// deduplication keys on the txid while the raw hex is what gets mined.
     private_mempool: Vec<(Txid, String)>,
+    /// Transactions broadcast but not yet mined. Unlike `private_mempool`,
+    /// which only holds what Bitcoin Core's mempool rejected, this tracks every
+    /// broadcast.
+    unmined_txids: HashSet<Txid>,
+    /// Transactions broadcast and since mined.
+    mined_txids: HashSet<Txid>,
 }
 
 impl<C: Connection, B: BitcoinRpc> Executor<C, B> {
@@ -255,6 +261,8 @@ impl<C: Connection, B: BitcoinRpc> Executor<C, B> {
             channel_states: HashMap::new(),
             negotiations: HashMap::new(),
             private_mempool: Vec::new(),
+            unmined_txids: HashSet::new(),
+            mined_txids: HashSet::new(),
         }
     }
 
@@ -419,6 +427,7 @@ impl<C: Connection, B: BitcoinRpc> Executor<C, B> {
                         &instr.inputs,
                         &mut self.channel_states,
                         &mut self.negotiations,
+                        &self.mined_txids,
                     )?;
                     let encoded = Message::FundingCreated(fc).encode();
                     log::debug!(
@@ -482,6 +491,7 @@ impl<C: Connection, B: BitcoinRpc> Executor<C, B> {
                         .map(|(_, hex)| hex)
                         .collect();
                     self.bitcoin_cli.mine_blocks(*v, &private_mempool);
+                    self.mined_txids.extend(self.unmined_txids.drain());
                     log::debug!("[{:?}] MineBlocks: mined {} block(s)", start.elapsed(), v);
                     None
                 }
@@ -503,6 +513,7 @@ impl<C: Connection, B: BitcoinRpc> Executor<C, B> {
                     {
                         self.private_mempool.push((txid, hex));
                     }
+                    self.unmined_txids.insert(txid);
                     None
                 }
 
@@ -830,7 +841,8 @@ fn build_open_channel(variables: &[Option<Variable>], inputs: &[usize]) -> OpenC
 ///
 /// Channel parameters are read from the negotiated `open_channel` and
 /// `accept_channel` messages recorded in `negotiations`, ensuring the
-/// commitment is built from the negotiated values.
+/// commitment is built from the negotiated values. `mined_txids` is used to
+/// determine whether the funding transaction has already been mined.
 ///
 /// If the negotiation for `temporary_channel_id` is incomplete, emits a
 /// `funding_created` with the derived outpoint and an all-zero signature.
@@ -839,6 +851,7 @@ fn build_funding_created(
     inputs: &[usize],
     channel_states: &mut HashMap<ChannelId, ChannelState>,
     negotiations: &mut HashMap<ChannelId, PendingChannel>,
+    mined_txids: &HashSet<Txid>,
 ) -> Result<FundingCreated, ExecuteError> {
     let funding_tx = resolve_funding_transaction(variables, inputs[0]);
     let opener_funding_privkey_bytes = resolve_private_key(variables, inputs[1]);
@@ -929,9 +942,15 @@ fn build_funding_created(
 
     // Building the same message again must not clobber a channel whose state
     // has already been established (and possibly advanced).
-    channel_states
-        .entry(channel_id)
-        .or_insert_with(|| ChannelState::new(config, holder, state, is_funding_outpoint_valid));
+    channel_states.entry(channel_id).or_insert_with(|| {
+        ChannelState::new(
+            config,
+            holder,
+            state,
+            is_funding_outpoint_valid,
+            mined_txids.contains(&funding_outpoint.txid),
+        )
+    });
 
     // Mark this negotiation as having built `funding_created`. It is retained
     // so repeated `funding_created` messages can still be built, but a later
@@ -1249,9 +1268,10 @@ fn recv_channel_ready(
 ///
 /// A `channel_ready` is expected when a tracked channel is still at commitment
 /// number 0, the counterparty's next per-commitment point is unknown, the
-/// advertised funding outpoint pays the negotiated funding output, and the
-/// funding transaction has at least `minimum_depth` confirmations (as
-/// specified in the received `accept_channel`).
+/// advertised funding outpoint pays the negotiated funding output, the funding
+/// transaction was mined only after we sent `funding_created`, and it has at
+/// least `minimum_depth` confirmations (as specified in the received
+/// `accept_channel`).
 fn is_channel_ready_expected(
     channel_states: &HashMap<ChannelId, ChannelState>,
     bitcoin_cli: &mut impl BitcoinRpc,
@@ -1260,6 +1280,7 @@ fn is_channel_ready_expected(
         state.commitment.commitment_number == 0
             && state.next_counterparty_per_commitment_point().is_none()
             && state.is_funding_outpoint_valid
+            && !state.was_funding_mined_prematurely
             && bitcoin_cli.get_transaction_confirmations(state.config.funding_outpoint.txid)
                 >= state.config.minimum_depth
     })
@@ -3842,6 +3863,56 @@ mod tests {
             Some(target_pcp)
         );
         assert!(executor.conn.recv_queue.is_empty());
+    }
+
+    #[test]
+    fn execute_recv_channel_ready_funding_mined_prematurely_is_noop() {
+        let (mut executor, channel_id, _) = recv_channel_ready_executor();
+
+        let mut instrs = create_and_broadcast_tx_instructions();
+        instrs.extend([
+            Instruction {
+                // Mine past the negotiated `minimum_depth` *before* sending
+                // `funding_created`.
+                operation: Operation::MineBlocks(8),
+                inputs: vec![],
+            },
+            Instruction {
+                operation: Operation::LoadChannelId([0xbb; 32]),
+                inputs: vec![],
+            },
+            Instruction {
+                operation: Operation::SendFundingCreated,
+                inputs: vec![6, 0, 9],
+            },
+            Instruction {
+                operation: Operation::RecvFundingSigned,
+                inputs: vec![10],
+            },
+            Instruction {
+                operation: Operation::RecvChannelReady,
+                inputs: vec![],
+            },
+        ]);
+
+        // The funding transaction confirmed before `funding_created`, so the
+        // target may never observe the confirmation and `RecvChannelReady` must
+        // be a no-op even though the confirmation count is sufficient.
+        executor
+            .execute(
+                &Program {
+                    instructions: instrs,
+                },
+                std::time::Instant::now(),
+            )
+            .unwrap();
+
+        // The target's next per-commitment point is still unknown and the queued
+        // `channel_ready` remains untouched.
+        let state = executor.channel_states.get_mut(&channel_id).unwrap();
+        assert!(state.was_funding_mined_prematurely);
+        assert!(state.next_counterparty_per_commitment_point().is_none());
+        assert_eq!(executor.conn.recv_queue.len(), 1);
     }
 
     // -- extract_field tests --

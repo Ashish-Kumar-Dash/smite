@@ -136,6 +136,11 @@ pub struct ChannelState {
     /// Whether the on-chain output at the advertised funding outpoint matches
     /// the negotiated funding script and amount.
     pub is_funding_outpoint_valid: bool,
+    /// Whether the funding transaction was already mined when we sent
+    /// `funding_created`. Some targets only watch for the funding confirmation
+    /// after the block height at which they receive `funding_created`, so they
+    /// may never observe it and never send `channel_ready`.
+    pub was_funding_mined_prematurely: bool,
 }
 
 impl Side {
@@ -164,6 +169,7 @@ impl ChannelState {
         holder: HolderIdentity,
         commitment: CommitmentState,
         is_funding_outpoint_valid: bool,
+        was_funding_mined_prematurely: bool,
     ) -> Self {
         Self {
             config,
@@ -172,6 +178,7 @@ impl ChannelState {
             opener_next_per_commitment_point: None,
             acceptor_next_per_commitment_point: None,
             is_funding_outpoint_valid,
+            was_funding_mined_prematurely,
         }
     }
 
