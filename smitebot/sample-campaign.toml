@@ -30,9 +30,9 @@ sharedir = "/tmp/smite-nyx"
 # Custom tmux session name (default: campaign ID).
 # tmux_session = "my-lnd-campaign"
 
+# Extra CLI flags appended to afl-fuzz.
+# afl_flags = ["-t", "1000+"]
+
 # Extra environment variables passed to AFL++ instances.
 # [afl_env]
 # AFL_KEEP_TIMEOUTS = "1"
-
-# Extra CLI flags appended to afl-fuzz.
-# afl_flags = ["-t", "1000+"]
