@@ -32,7 +32,9 @@ const VERIFY_TIMEOUT: Duration = Duration::from_mins(10);
 const VERIFY_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 /// AFL++ power schedules for round-robin distribution across runners.
-const POWER_SCHEDULES: &[&str] = &["fast", "explore", "coe", "lin", "quad", "exploit", "rare"];
+// Index 0 (explore) is AFL++'s default schedule; the primary runs it implicitly
+// with no -p flag, so secondaries cycling past the end wrap onto the safe default.
+const POWER_SCHEDULES: &[&str] = &["explore", "fast", "coe", "lin", "quad", "exploit", "rare"];
 
 /// Command handler for `smitebot start`.
 pub struct StartCommand;
@@ -392,38 +394,80 @@ fn read_fuzzer_pid(path: &Path) -> Option<u32> {
         .and_then(|v| v.trim().parse().ok())
 }
 
+/// FNV-1a hash of `runner_id` followed by `name`, reduced to `0..100`.
+///
+/// Used to spread mutation modifiers across runners deterministically, so a
+/// given runner always draws the same flags. std's `DefaultHasher` is
+/// explicitly not stable across Rust releases (see `std::hash` docs), which
+/// would break reproducibility, hence this fixed inline hash.
+fn modifier_hash(runner_id: u16, name: &str) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut h = FNV_OFFSET;
+    for byte in runner_id.to_le_bytes().iter().chain(name.as_bytes()) {
+        h ^= u64::from(*byte);
+        h = h.wrapping_mul(FNV_PRIME);
+    }
+    h % 100
+}
+
 /// Returns the strategy flags and env vars for a specific runner.
 ///
-/// Distribution is deterministic by runner index. Runner 0 is primary.
+/// Distribution is deterministic by runner index. Runner 0 is primary and runs
+/// the default (explore) schedule with no modifiers; the mutation modifiers
+/// below apply only to secondaries. `has_custom_mutator` is true when an IR
+/// scenario or the user's `afl_env` sets `AFL_CUSTOM_MUTATOR_LIBRARY`.
 fn runner_strategy(
     runner_id: u16,
     runner_count: u16,
     testcache_mb: Option<u64>,
+    has_custom_mutator: bool,
 ) -> (Vec<String>, Vec<(String, String)>) {
     let mut flags = Vec::new();
     let mut envs = Vec::new();
 
-    let schedule = POWER_SCHEDULES[runner_id as usize % POWER_SCHEDULES.len()];
-    flags.extend(["-p".to_string(), schedule.to_string()]);
-
     if runner_id == 0 {
         envs.push(("AFL_FINAL_SYNC".to_string(), "1".to_string()));
-    }
+    } else {
+        // Secondaries only. fuzzing_in_depth.md §c ("Using multiple cores") puts
+        // the power schedule and the strategy knobs under "the other secondaries".
+        let schedule = POWER_SCHEDULES[runner_id as usize % POWER_SCHEDULES.len()];
+        flags.extend(["-p".to_string(), schedule.to_string()]);
 
-    // AFL++ docs: the strategy knobs below apply to "the other secondaries",
-    // not the primary. See fuzzing_in_depth.md §c "Using multiple cores".
-    if runner_id > 0 {
-        // -a binary on ~70% of secondary runners.
-        let secondary_count = runner_count.saturating_sub(1) as usize;
-        let binary_count = (secondary_count * 7).div_ceil(10);
-        if ((runner_id - 1) as usize) < binary_count {
+        // Modifiers spread by modifier_hash (X < probability applies), so no two
+        // modifiers correlate by runner index. Mutually-exclusive flags share one
+        // hash mapped to disjoint ranges so a runner can never draw both values.
+
+        // AFL_DISABLE_TRIM on ~60% of secondary runners.
+        if modifier_hash(runner_id, "AFL_DISABLE_TRIM") < 60 {
+            envs.push(("AFL_DISABLE_TRIM".to_string(), "1".to_string()));
+        }
+
+        // -a binary on ~70% of secondaries: wire messages are binary, so hinting
+        // AFL++ to use binary mutation strategies (not text tokenization) fits the
+        // target. See https://github.com/AFLplusplus/AFLplusplus/blob/e0b7cae5/src/afl-fuzz.c#L288
+        if modifier_hash(runner_id, "-a") < 70 {
             flags.extend(["-a".to_string(), "binary".to_string()]);
         }
 
-        // AFL_DISABLE_TRIM on ~60% of secondary runners.
-        let trim_count = (secondary_count * 6).div_ceil(10);
-        if ((runner_id - 1) as usize) < trim_count {
-            envs.push(("AFL_DISABLE_TRIM".to_string(), "1".to_string()));
+        // -P: fixed mutation strategy. explore 40% / exploit 20% / none.
+        let p = modifier_hash(runner_id, "-P");
+        if p < 40 {
+            flags.extend(["-P".to_string(), "explore".to_string()]);
+        } else if p < 60 {
+            flags.extend(["-P".to_string(), "exploit".to_string()]);
+        }
+
+        // -L 0: MOpt mode, ~10%. Custom mutators are incompatible with MOpt —
+        // https://github.com/AFLplusplus/AFLplusplus/blob/e0b7cae5/src/afl-fuzz.c#L2417
+        // FATALs — so skip -L when one is set.
+        if !has_custom_mutator && modifier_hash(runner_id, "-L") < 10 {
+            flags.extend(["-L".to_string(), "0".to_string()]);
+        }
+
+        // -Z: sequential queue selection instead of weighted random, ~10%.
+        if modifier_hash(runner_id, "-Z") < 10 {
+            flags.push("-Z".to_string());
         }
     }
 
@@ -470,7 +514,12 @@ fn build_runner_shell_cmd(
     testcache_mb: Option<u64>,
 ) -> String {
     let afl_fuzz = config.aflpp_path.join("afl-fuzz");
-    let (strategy_flags, strategy_envs) = runner_strategy(id, config.runners, testcache_mb);
+    // -L (MOpt) is incompatible with custom mutators; runner_strategy skips it
+    // when an IR scenario or the user's afl_env supplies AFL_CUSTOM_MUTATOR_LIBRARY.
+    let has_custom_mutator = config.scenario.starts_with("ir")
+        || config.afl_env.contains_key("AFL_CUSTOM_MUTATOR_LIBRARY");
+    let (strategy_flags, strategy_envs) =
+        runner_strategy(id, config.runners, testcache_mb, has_custom_mutator);
 
     // Env precedence: strategy → IR mutator → user afl_env (last wins).
     let mut envs = strategy_envs;
@@ -672,81 +721,171 @@ mod tests {
 
     #[test]
     fn runner_strategy_primary_gets_final_sync() {
-        let (flags, envs) = runner_strategy(0, 8, None);
+        let (_, envs) = runner_strategy(0, 8, None, false);
         assert!(envs.iter().any(|(k, v)| k == "AFL_FINAL_SYNC" && v == "1"));
-        assert!(flags.contains(&"-p".to_string()));
+    }
+
+    #[test]
+    fn runner_strategy_primary_gets_no_modifiers() {
+        // Modifiers apply to secondaries only, never the primary.
+        let (flags, envs) = runner_strategy(0, 10, None, false);
+        for modifier in ["-p", "-a", "-P", "-L", "-Z"] {
+            assert!(
+                !flags.contains(&modifier.to_string()),
+                "primary got {modifier}"
+            );
+        }
+        assert!(!envs.iter().any(|(k, _)| k == "AFL_DISABLE_TRIM"));
     }
 
     #[test]
     fn runner_strategy_secondary_no_final_sync() {
-        let (_, envs) = runner_strategy(1, 8, None);
+        let (_, envs) = runner_strategy(1, 8, None, false);
         assert!(!envs.iter().any(|(k, _)| k == "AFL_FINAL_SYNC"));
     }
 
     #[test]
     fn runner_strategy_cycles_power_schedules() {
-        let schedules: Vec<String> = (0..7)
+        // Secondaries (id 1..) index the array directly; explore (index 0) is
+        // the primary's default, so the first secondary starts at fast.
+        let schedules: Vec<String> = (1..8)
             .map(|id| {
-                let (flags, _) = runner_strategy(id, 8, None);
+                let (flags, _) = runner_strategy(id, 16, None, false);
                 flags[1].clone()
             })
             .collect();
         assert_eq!(
             schedules,
-            ["fast", "explore", "coe", "lin", "quad", "exploit", "rare"]
+            ["fast", "coe", "lin", "quad", "exploit", "rare", "explore"]
         );
     }
 
     #[test]
     fn runner_strategy_wraps_schedules_past_seven() {
-        let (flags, _) = runner_strategy(7, 8, None);
-        assert_eq!(flags[1], "fast");
+        // id 7 wraps to index 0 = explore.
+        let (flags, _) = runner_strategy(7, 16, None, false);
+        assert_eq!(flags[1], "explore");
     }
 
     #[test]
-    fn runner_strategy_binary_hint_on_70_percent_of_secondaries() {
-        // 10 runners: 1 primary + 9 secondary. 70% of 9 = 7 (ceil).
-        let binary_count = (0..10u16)
+    fn runner_strategy_input_format_binary_70_percent() {
+        // 100 secondaries; expect ~70 with -a binary. Allow ±15 for hash spread.
+        let binary_count = (1..=100u16)
             .filter(|&id| {
-                let (flags, _) = runner_strategy(id, 10, None);
-                flags.contains(&"-a".to_string())
+                let (flags, _) = runner_strategy(id, 101, None, false);
+                flags.contains(&"binary".to_string())
             })
             .count();
-        assert_eq!(binary_count, 7);
-
-        // Primary never gets -a binary.
-        let (flags, _) = runner_strategy(0, 10, None);
-        assert!(!flags.contains(&"-a".to_string()));
+        assert!(
+            (55..=85).contains(&binary_count),
+            "binary_count={binary_count}, expected ~70"
+        );
     }
 
     #[test]
-    fn runner_strategy_disable_trim_on_60_percent_of_secondaries() {
-        // 10 runners: 1 primary + 9 secondary. 60% of 9 = 6 (ceil).
-        let trim_count = (0..10u16)
+    fn runner_strategy_fixed_strategy_probabilities() {
+        // 100 secondaries; -P explore ~40%, exploit ~20%. Allow ±15.
+        let mut explore_count = 0usize;
+        let mut exploit_count = 0usize;
+        for id in 1..=100u16 {
+            let (flags, _) = runner_strategy(id, 101, None, false);
+            assert!(flags.iter().filter(|f| *f == "-P").count() <= 1);
+            if let Some(pos) = flags.iter().position(|f| f == "-P") {
+                match flags[pos + 1].as_str() {
+                    "explore" => explore_count += 1,
+                    "exploit" => exploit_count += 1,
+                    other => panic!("unexpected -P value {other}"),
+                }
+            }
+        }
+        assert!(
+            (25..=55).contains(&explore_count),
+            "explore_count={explore_count}, expected ~40"
+        );
+        assert!(
+            (8..=32).contains(&exploit_count),
+            "exploit_count={exploit_count}, expected ~20"
+        );
+    }
+
+    #[test]
+    fn runner_strategy_skips_mopt_with_custom_mutator() {
+        // -L (MOpt) FATALs with custom mutators (afl-fuzz.c#L2417): never emitted.
+        for id in 1..=100u16 {
+            let (flags, _) = runner_strategy(id, 101, None, true);
+            assert!(
+                !flags.contains(&"-L".to_string()),
+                "id {id} got -L with custom mutator"
+            );
+        }
+    }
+
+    #[test]
+    fn runner_strategy_mopt_probability() {
+        // 100 secondaries; -L 0 ~10%. Allow ±10.
+        let mopt_count = (1..=100u16)
             .filter(|&id| {
-                let (_, envs) = runner_strategy(id, 10, None);
+                let (flags, _) = runner_strategy(id, 101, None, false);
+                flags.contains(&"-L".to_string())
+            })
+            .count();
+        assert!(
+            (2..=20).contains(&mopt_count),
+            "mopt_count={mopt_count}, expected ~10"
+        );
+    }
+
+    #[test]
+    fn runner_strategy_sequential_queue_probability() {
+        // 100 secondaries; -Z ~10%. Allow ±10.
+        let z_count = (1..=100u16)
+            .filter(|&id| {
+                let (flags, _) = runner_strategy(id, 101, None, false);
+                flags.contains(&"-Z".to_string())
+            })
+            .count();
+        assert!(
+            (2..=20).contains(&z_count),
+            "z_count={z_count}, expected ~10"
+        );
+    }
+
+    #[test]
+    fn runner_strategy_deterministic() {
+        // Same inputs always yield the same flags — reproducibility guarantee.
+        assert_eq!(
+            runner_strategy(5, 16, None, false),
+            runner_strategy(5, 16, None, false)
+        );
+    }
+
+    #[test]
+    fn runner_strategy_disable_trim_60_percent() {
+        // 100 secondaries; expect ~60 with AFL_DISABLE_TRIM. Allow ±15.
+        let trim_count = (1..=100u16)
+            .filter(|&id| {
+                let (_, envs) = runner_strategy(id, 101, None, false);
                 envs.iter().any(|(k, _)| k == "AFL_DISABLE_TRIM")
             })
             .count();
-        assert_eq!(trim_count, 6);
-
-        // Primary never gets AFL_DISABLE_TRIM.
-        let (_, envs) = runner_strategy(0, 10, None);
-        assert!(!envs.iter().any(|(k, _)| k == "AFL_DISABLE_TRIM"));
+        assert!(
+            (45..=75).contains(&trim_count),
+            "trim_count={trim_count}, expected ~60"
+        );
     }
 
     #[test]
     fn runner_strategy_import_first_under_16() {
-        let (_, envs) = runner_strategy(0, 8, None);
+        let (_, envs) = runner_strategy(0, 8, None, false);
         assert!(envs.iter().any(|(k, _)| k == "AFL_IMPORT_FIRST"));
 
-        let (_, envs) = runner_strategy(0, 16, None);
+        let (_, envs) = runner_strategy(0, 16, None, false);
         assert!(!envs.iter().any(|(k, _)| k == "AFL_IMPORT_FIRST"));
     }
 
     #[test]
     fn runner_strategy_includes_testcache() {
-        let (_, envs) = runner_strategy(0, 8, Some(500));
+        let (_, envs) = runner_strategy(0, 8, Some(500), false);
         assert!(
             envs.iter()
                 .any(|(k, v)| k == "AFL_TESTCACHE_SIZE" && v == "500")
@@ -767,7 +906,8 @@ mod tests {
         assert!(cmd.contains("-M"));
         assert!(cmd.contains("AFL_FINAL_SYNC='1'"));
         assert!(cmd.contains("AFL_TESTCACHE_SIZE='500'"));
-        assert!(cmd.contains("-p"));
+        // Primary uses the default schedule: no -p flag.
+        assert!(!cmd.contains("-p"));
     }
 
     #[test]
@@ -800,7 +940,7 @@ output_dir = "{}"
 sharedir = "{}"
 
 [afl_env]
-AFL_DISABLE_TRIM = "0"
+AFL_IMPORT_FIRST = "0"
 "#,
                 dir.path().display(),
                 dir.path().display(),
@@ -812,13 +952,12 @@ AFL_DISABLE_TRIM = "0"
         let config = CampaignConfig::load(&config_path).unwrap();
         let seed_dir = dir.path().join("seeds");
 
-        // Use secondary runner (id=1) because primary doesn't get AFL_DISABLE_TRIM.
         let cmd = build_runner_shell_cmd(&config, 1, &seed_dir, None);
 
-        // Strategy sets AFL_DISABLE_TRIM='1' first, user override AFL_DISABLE_TRIM='0' last.
-        // Both appear; shell uses last assignment.
-        let first_pos = cmd.find("AFL_DISABLE_TRIM='1'").unwrap();
-        let last_pos = cmd.find("AFL_DISABLE_TRIM='0'").unwrap();
+        // Strategy sets AFL_IMPORT_FIRST='1' (runners < 16) first, user override
+        // AFL_IMPORT_FIRST='0' last. Both appear; shell uses the last assignment.
+        let first_pos = cmd.find("AFL_IMPORT_FIRST='1'").unwrap();
+        let last_pos = cmd.find("AFL_IMPORT_FIRST='0'").unwrap();
         assert!(last_pos > first_pos);
     }
 
