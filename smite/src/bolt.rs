@@ -12,6 +12,7 @@ mod channel_ready;
 mod channel_update;
 mod closing_complete;
 mod closing_sig;
+mod commitment_signed;
 mod error;
 mod funding_created;
 mod funding_signed;
@@ -48,6 +49,7 @@ pub use channel_ready::{ChannelReady, ChannelReadyTlvs};
 pub use channel_update::ChannelUpdate;
 pub use closing_complete::{ClosingComplete, ClosingTlvs};
 pub use closing_sig::ClosingSig;
+pub use commitment_signed::{CommitmentSigned, CommitmentSignedTlvs};
 pub use error::Error;
 pub use funding_created::FundingCreated;
 pub use funding_signed::FundingSigned;
@@ -183,6 +185,8 @@ pub mod msg_type {
     pub const UPDATE_FULFILL_HTLC: u16 = 130;
     /// `update_fail_htlc` message (BOLT 2).
     pub const UPDATE_FAIL_HTLC: u16 = 131;
+    /// `commitment_signed` message (BOLT 2).
+    pub const COMMITMENT_SIGNED: u16 = 132;
     /// `update_fail_malformed_htlc` message (BOLT 2).
     pub const UPDATE_FAIL_MALFORMED_HTLC: u16 = 135;
     /// `channel_announcement` message (BOLT 7).
@@ -251,6 +255,8 @@ pub enum Message {
     UpdateFulfillHtlc(UpdateFulfillHtlc),
     /// `update_fail_htlc` message (type 131).
     UpdateFailHtlc(UpdateFailHtlc),
+    /// `commitment_signed` message (type 132).
+    CommitmentSigned(CommitmentSigned),
     /// `update_fail_malformed_htlc` message (type 135).
     UpdateFailMalformedHtlc(UpdateFailMalformedHtlc),
     /// `channel_announcement` message (type 256).
@@ -305,6 +311,7 @@ impl Message {
             Self::UpdateAddHtlc(_) => msg_type::UPDATE_ADD_HTLC,
             Self::UpdateFulfillHtlc(_) => msg_type::UPDATE_FULFILL_HTLC,
             Self::UpdateFailHtlc(_) => msg_type::UPDATE_FAIL_HTLC,
+            Self::CommitmentSigned(_) => msg_type::COMMITMENT_SIGNED,
             Self::UpdateFailMalformedHtlc(_) => msg_type::UPDATE_FAIL_MALFORMED_HTLC,
             Self::ChannelAnnouncement(_) => msg_type::CHANNEL_ANNOUNCEMENT,
             Self::NodeAnnouncement(_) => msg_type::NODE_ANNOUNCEMENT,
@@ -346,6 +353,7 @@ impl Message {
             Self::UpdateAddHtlc(m) => out.extend(m.encode()),
             Self::UpdateFulfillHtlc(m) => out.extend(m.encode()),
             Self::UpdateFailHtlc(m) => out.extend(m.encode()),
+            Self::CommitmentSigned(m) => out.extend(m.encode()),
             Self::UpdateFailMalformedHtlc(m) => out.extend(m.encode()),
             Self::ChannelAnnouncement(m) => out.extend(m.encode()),
             Self::NodeAnnouncement(m) => out.extend(m.encode()),
@@ -398,6 +406,9 @@ impl Message {
                 Ok(Self::UpdateFulfillHtlc(UpdateFulfillHtlc::decode(cursor)?))
             }
             msg_type::UPDATE_FAIL_HTLC => Ok(Self::UpdateFailHtlc(UpdateFailHtlc::decode(cursor)?)),
+            msg_type::COMMITMENT_SIGNED => {
+                Ok(Self::CommitmentSigned(CommitmentSigned::decode(cursor)?))
+            }
             msg_type::UPDATE_FAIL_MALFORMED_HTLC => Ok(Self::UpdateFailMalformedHtlc(
                 UpdateFailMalformedHtlc::decode(cursor)?,
             )),
@@ -917,6 +928,33 @@ mod tests {
         assert_eq!(decoded, Message::UpdateFailHtlc(msg));
     }
 
+    /// Valid `CommitmentSigned` message for testing.
+    fn sample_commitment_signed() -> CommitmentSigned {
+        let sig = |seed: u8| {
+            let secp = Secp256k1::new();
+            let sk = SecretKey::from_slice(&[seed; 32]).unwrap();
+            let msg = secp256k1::Message::from_digest([seed; 32]);
+            secp.sign_ecdsa(&msg, &sk)
+        };
+
+        CommitmentSigned {
+            channel_id: ChannelId::new([0xaa; CHANNEL_ID_SIZE]),
+            signature: sig(0x11),
+            htlc_signatures: vec![sig(0x22), sig(0x33)],
+            tlvs: CommitmentSignedTlvs {
+                funding_txid: Some(Txid::from_byte_array([0xbb; TXID_SIZE])),
+            },
+        }
+    }
+
+    #[test]
+    fn message_commitment_signed_roundtrip() {
+        let msg = sample_commitment_signed();
+        let encoded = Message::CommitmentSigned(msg.clone()).encode();
+        let decoded = Message::decode(&encoded).unwrap();
+        assert_eq!(decoded, Message::CommitmentSigned(msg));
+    }
+
     #[test]
     fn message_update_fail_malformed_htlc_roundtrip() {
         let msg = UpdateFailMalformedHtlc {
@@ -1194,6 +1232,10 @@ mod tests {
             })
             .msg_type(),
             msg_type::UPDATE_FAIL_HTLC
+        );
+        assert_eq!(
+            Message::CommitmentSigned(sample_commitment_signed()).msg_type(),
+            msg_type::COMMITMENT_SIGNED
         );
         assert_eq!(
             Message::UpdateFailMalformedHtlc(UpdateFailMalformedHtlc {
