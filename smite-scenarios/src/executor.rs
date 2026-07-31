@@ -205,6 +205,10 @@ pub enum ExecuteError {
     #[error("unexpected message: expected type {expected}, got {got}")]
     UnexpectedMessage { expected: u16, got: u16 },
 
+    /// The target sent a BOLT `error`.
+    #[error("peer error on {:?}: {}", .0.channel_id, .0.message().unwrap_or("<non-utf8>"))]
+    PeerError(smite::bolt::Error),
+
     /// Wallet UTXOs could not cover the funding amount and fees.
     #[error("funding: {0}")]
     InsufficientFunds(#[from] smite::channel_tx::InsufficientFunds),
@@ -1220,6 +1224,8 @@ fn recv_non_ping(conn: &mut impl Connection, timeout: Duration) -> Result<Messag
             | Message::GossipTimestampFilter(_) => {
                 log::debug!("skipping gossip message type {}", msg.msg_type());
             }
+            // Surface the received error message.
+            Message::Error(e) => return Err(ExecuteError::PeerError(e)),
             other => return Ok(other),
         }
     })();
@@ -2459,6 +2465,33 @@ mod tests {
                 got: msg_type::INIT,
             }
         ));
+    }
+
+    #[test]
+    fn execute_recv_peer_error() {
+        let peer_error = smite::bolt::Error::all_channels("Wrong channel id in channel_ready");
+        let error_bytes = Message::Error(peer_error.clone()).encode();
+
+        let mut instrs = send_open_channel_instructions();
+        let sent_open_channel = instrs.len() - 1;
+        instrs.push(Instruction {
+            operation: Operation::RecvAcceptChannel,
+            inputs: vec![sent_open_channel],
+        });
+
+        let program = Program {
+            instructions: instrs,
+        };
+        let mut executor = Executor::new(
+            MockConnection::new(),
+            MockBitcoinCli::default(),
+            sample_context(),
+        );
+        executor.conn.queue_recv(error_bytes);
+        let err = executor
+            .execute(&program, std::time::Instant::now())
+            .unwrap_err();
+        assert!(matches!(err, ExecuteError::PeerError(e) if e == peer_error));
     }
 
     #[test]

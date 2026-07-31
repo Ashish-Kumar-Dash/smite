@@ -9,7 +9,7 @@ use smite::scenarios::{Scenario, ScenarioError, ScenarioResult};
 use smite::violation::Violation;
 use smite_ir::Program;
 
-use super::{SnapshotSetup, ping_pong};
+use super::{PingOutcome, SnapshotSetup, is_known_parked_error, ping_pong_checked};
 use crate::executor::{ExecuteError, Executor};
 use crate::targets::Target;
 
@@ -57,6 +57,10 @@ impl<T: Target, S: SnapshotSetup<T>> Scenario for IrScenario<T, S> {
             input.len(),
         );
 
+        // Set when the target has sent an error after which it is known to not
+        // service this connection any further. See `is_known_parked_error`.
+        let mut parked = false;
+
         match self.executor.execute(&program, start) {
             Ok(()) => {
                 log::debug!("[{:?}] Program executed successfully", start.elapsed());
@@ -74,6 +78,15 @@ impl<T: Target, S: SnapshotSetup<T>> Scenario for IrScenario<T, S> {
                 log::debug!(
                     "[{:?}] unexpected message: expected {expected}, got {got}",
                     start.elapsed(),
+                );
+            }
+            Err(ExecuteError::PeerError(e)) => {
+                // Normal protocol behavior: the target rejected our input.
+                parked = is_known_parked_error(&e);
+                log::debug!(
+                    "[{:?}] peer error (parked: {parked}): {}",
+                    start.elapsed(),
+                    e.message().unwrap_or("<non-utf8>"),
                 );
             }
             Err(ExecuteError::Decode(e)) => {
@@ -99,14 +112,29 @@ impl<T: Target, S: SnapshotSetup<T>> Scenario for IrScenario<T, S> {
         }
 
         // Ping-pong sync to ensure the target has at least done the initial
-        // processing of all previous messages. Timeouts here signal a hang.
-        if let Err(e) = ping_pong(self.executor.conn_mut()) {
-            log::debug!("[{:?}] ping_pong: {e}", start.elapsed());
-            if e.is_timeout() {
-                return ScenarioResult::Fail(Violation::Hung.to_string());
-            }
+        // processing of all previous messages. Timeouts here signal a hang,
+        // unless we know the connection has been parked by the target, in which
+        // case we continue without requiring a pong.
+        if parked {
+            log::info!(
+                "[{:?}] connection parked by target, skipping ping-pong",
+                start.elapsed()
+            );
         } else {
-            log::debug!("[{:?}] Target responded with pong", start.elapsed());
+            match ping_pong_checked(self.executor.conn_mut()) {
+                Ok(PingOutcome::Pong) => {
+                    log::debug!("[{:?}] Target responded with pong", start.elapsed());
+                }
+                Ok(PingOutcome::ParkedConnection(msg)) => {
+                    log::info!("[{:?}] connection parked by target: {msg}", start.elapsed());
+                }
+                Err(e) => {
+                    log::debug!("[{:?}] ping_pong: {e}", start.elapsed());
+                    if e.is_timeout() {
+                        return ScenarioResult::Fail(Violation::Hung.to_string());
+                    }
+                }
+            }
         }
 
         if let Err(e) = self.target.check_alive() {
