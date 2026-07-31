@@ -3,7 +3,7 @@
 use crate::bolt::BoltError;
 use crate::bolt::types::{
     BigSize, CHANNEL_ID_SIZE, COMPACT_SIGNATURE_SIZE, ChannelId, PUBLIC_KEY_SIZE, SHA256_HASH_SIZE,
-    ShortChannelId, TXID_SIZE,
+    ShortChannelId, TXID_SIZE, Tu32, Tu64,
 };
 use bitcoin::Txid;
 use bitcoin::hashes::{Hash, sha256};
@@ -56,6 +56,54 @@ impl<const N: usize> WireFormat for [u8; N] {
         out.extend_from_slice(self);
     }
 }
+
+macro_rules! impl_truncated_int {
+    ($name:ident, $inner:ty) => {
+        impl WireFormat for $name {
+            /// Reads a minimally-encoded truncated integer from all remaining
+            /// bytes.
+            ///
+            /// # Errors
+            ///
+            /// Returns `TruncatedIntTooLong` if more bytes remain than the
+            /// integer's width, or `TruncatedIntNotMinimal` if the first byte
+            /// is zero.
+            fn read(data: &mut &[u8]) -> Result<Self, BoltError> {
+                const WIDTH: usize = std::mem::size_of::<$inner>();
+
+                let bytes = *data;
+
+                if bytes.len() > WIDTH {
+                    return Err(BoltError::TruncatedIntTooLong {
+                        max: WIDTH,
+                        actual: bytes.len(),
+                    });
+                }
+                if bytes.first() == Some(&0) {
+                    return Err(BoltError::TruncatedIntNotMinimal);
+                }
+
+                *data = &[];
+
+                let mut buf = [0u8; WIDTH];
+                buf[WIDTH - bytes.len()..].copy_from_slice(bytes);
+                Ok(Self(<$inner>::from_be_bytes(buf)))
+            }
+
+            /// Writes the integer big-endian with leading zero bytes stripped.
+            ///
+            /// Zero encodes to zero bytes.
+            fn write(&self, out: &mut Vec<u8>) {
+                let bytes = self.0.to_be_bytes();
+                let start = bytes.iter().position(|b| *b != 0).unwrap_or(bytes.len());
+                out.extend_from_slice(&bytes[start..]);
+            }
+        }
+    };
+}
+
+impl_truncated_int!(Tu32, u32);
+impl_truncated_int!(Tu64, u64);
 
 macro_rules! impl_wire_format_int {
     ($type:ty) => {
@@ -1006,5 +1054,117 @@ mod tests {
             sha256::Hash::from_byte_array([0x55; SHA256_HASH_SIZE])
         );
         assert_eq!(data.len(), 5); // 5 bytes remaining
+    }
+
+    // Test vectors for `n1`s `tlv1`s `amount_msat` (`tu64`) from BOLT 1 Appendix B
+    // https://github.com/lightning/bolts/blob/master/01-messaging.md#appendix-b-type-length-value-test-vectors
+
+    #[test]
+    fn bolt_tu64_decoding_successes() {
+        let cases: &[(&[u8], u64)] = &[
+            (&[], 0),
+            (&[0x01], 1),
+            (&[0x01, 0x00], 256),
+            (&[0x01, 0x00, 0x00], 65_536),
+            (&[0x01, 0x00, 0x00, 0x00], 16_777_216),
+            (&[0x01, 0x00, 0x00, 0x00, 0x00], 4_294_967_296),
+            (&[0x01, 0x00, 0x00, 0x00, 0x00, 0x00], 1_099_511_627_776),
+            (
+                &[0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+                281_474_976_710_656,
+            ),
+            (
+                &[0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+                72_057_594_037_927_936,
+            ),
+        ];
+
+        for (bytes, value) in cases {
+            let mut cursor = *bytes;
+            assert_eq!(Tu64::read(&mut cursor), Ok(Tu64(*value)), "value {value}");
+            assert!(cursor.is_empty(), "value {value}");
+
+            let mut buf = Vec::new();
+            Tu64(*value).write(&mut buf);
+            assert_eq!(buf, *bytes, "value {value}");
+        }
+    }
+
+    #[test]
+    fn bolt_tu64_rejects_oversized_encoding() {
+        // 0x01 09 ffffffffffffffffff: greater than encoding length for tu64.
+        let mut data: &[u8] = &[0xff; 9];
+        assert_eq!(
+            Tu64::read(&mut data),
+            Err(BoltError::TruncatedIntTooLong { max: 8, actual: 9 })
+        );
+    }
+
+    #[test]
+    fn bolt_tu64_rejects_non_minimal_encoding() {
+        // 0x01 01 00 through 0x01 08 0001000000000000: leading zero byte.
+        let cases: &[&[u8]] = &[
+            &[0x00],
+            &[0x00, 0x01],
+            &[0x00, 0x01, 0x00],
+            &[0x00, 0x01, 0x00, 0x00],
+            &[0x00, 0x01, 0x00, 0x00, 0x00],
+            &[0x00, 0x01, 0x00, 0x00, 0x00, 0x00],
+            &[0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00],
+            &[0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+        ];
+
+        for bytes in cases {
+            let mut cursor = *bytes;
+            assert_eq!(
+                Tu64::read(&mut cursor),
+                Err(BoltError::TruncatedIntNotMinimal),
+                "{bytes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn tu32_roundtrips_minimal_encodings() {
+        let cases: &[(&[u8], u32)] = &[
+            (&[], 0),
+            (&[0x01], 1),
+            (&[0x01, 0x00], 256),
+            (&[0x01, 0x00, 0x00], 65_536),
+            (&[0x01, 0x00, 0x00, 0x00], 16_777_216),
+            (&[0xff, 0xff, 0xff, 0xff], u32::MAX),
+        ];
+
+        for (bytes, value) in cases {
+            let mut cursor = *bytes;
+            assert_eq!(Tu32::read(&mut cursor), Ok(Tu32(*value)), "value {value}");
+            assert!(cursor.is_empty(), "value {value}");
+
+            let mut buf = Vec::new();
+            Tu32(*value).write(&mut buf);
+            assert_eq!(buf, *bytes, "value {value}");
+        }
+    }
+
+    #[test]
+    fn tu32_rejects_oversized_encoding() {
+        let mut data: &[u8] = &[0x01; 5];
+        assert_eq!(
+            Tu32::read(&mut data),
+            Err(BoltError::TruncatedIntTooLong { max: 4, actual: 5 })
+        );
+
+        // Five bytes still fit in a tu64.
+        let mut data: &[u8] = &[0x01; 5];
+        assert_eq!(Tu64::read(&mut data), Ok(Tu64(0x01_0101_0101)));
+    }
+
+    #[test]
+    fn tu32_rejects_non_minimal_encoding() {
+        let mut data: &[u8] = &[0x00, 0x01];
+        assert_eq!(
+            Tu32::read(&mut data),
+            Err(BoltError::TruncatedIntNotMinimal)
+        );
     }
 }
