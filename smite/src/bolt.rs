@@ -23,6 +23,7 @@ mod open_channel;
 mod open_channel2;
 mod ping;
 mod pong;
+mod revoke_and_ack;
 mod shutdown;
 mod tlv;
 mod tx_abort;
@@ -60,6 +61,7 @@ pub use open_channel::{OpenChannel, OpenChannelTlvs};
 pub use open_channel2::{OpenChannel2, OpenChannel2Tlvs};
 pub use ping::Ping;
 pub use pong::Pong;
+pub use revoke_and_ack::RevokeAndAck;
 pub use shutdown::Shutdown;
 pub use tlv::{TlvRecord, TlvStream};
 pub use tx_abort::TxAbort;
@@ -71,8 +73,8 @@ pub use tx_remove_input::TxRemoveInput;
 pub use tx_remove_output::TxRemoveOutput;
 pub use types::{
     BigSize, CHANNEL_ID_SIZE, COMPACT_SIGNATURE_SIZE, ChannelId, MAX_MESSAGE_SIZE,
-    PAYMENT_ONION_PACKET_SIZE, PUBLIC_KEY_SIZE, SHA256_HASH_SIZE, SHORT_CHANNEL_ID_SIZE,
-    ShortChannelId, TXID_SIZE, Tu32, Tu64,
+    PAYMENT_ONION_PACKET_SIZE, PER_COMMITMENT_SECRET_SIZE, PUBLIC_KEY_SIZE, SHA256_HASH_SIZE,
+    SHORT_CHANNEL_ID_SIZE, ShortChannelId, TXID_SIZE, Tu32, Tu64,
 };
 pub use update_add_htlc::{UpdateAddHtlc, UpdateAddHtlcTlvs};
 pub use update_fail_htlc::{UpdateFailHtlc, UpdateFailHtlcTlvs};
@@ -187,6 +189,8 @@ pub mod msg_type {
     pub const UPDATE_FAIL_HTLC: u16 = 131;
     /// `commitment_signed` message (BOLT 2).
     pub const COMMITMENT_SIGNED: u16 = 132;
+    /// `revoke_and_ack` message (BOLT 2).
+    pub const REVOKE_AND_ACK: u16 = 133;
     /// `update_fail_malformed_htlc` message (BOLT 2).
     pub const UPDATE_FAIL_MALFORMED_HTLC: u16 = 135;
     /// `channel_announcement` message (BOLT 7).
@@ -257,6 +261,8 @@ pub enum Message {
     UpdateFailHtlc(UpdateFailHtlc),
     /// `commitment_signed` message (type 132).
     CommitmentSigned(CommitmentSigned),
+    /// `revoke_and_ack` message (type 133).
+    RevokeAndAck(RevokeAndAck),
     /// `update_fail_malformed_htlc` message (type 135).
     UpdateFailMalformedHtlc(UpdateFailMalformedHtlc),
     /// `channel_announcement` message (type 256).
@@ -312,6 +318,7 @@ impl Message {
             Self::UpdateFulfillHtlc(_) => msg_type::UPDATE_FULFILL_HTLC,
             Self::UpdateFailHtlc(_) => msg_type::UPDATE_FAIL_HTLC,
             Self::CommitmentSigned(_) => msg_type::COMMITMENT_SIGNED,
+            Self::RevokeAndAck(_) => msg_type::REVOKE_AND_ACK,
             Self::UpdateFailMalformedHtlc(_) => msg_type::UPDATE_FAIL_MALFORMED_HTLC,
             Self::ChannelAnnouncement(_) => msg_type::CHANNEL_ANNOUNCEMENT,
             Self::NodeAnnouncement(_) => msg_type::NODE_ANNOUNCEMENT,
@@ -354,6 +361,7 @@ impl Message {
             Self::UpdateFulfillHtlc(m) => out.extend(m.encode()),
             Self::UpdateFailHtlc(m) => out.extend(m.encode()),
             Self::CommitmentSigned(m) => out.extend(m.encode()),
+            Self::RevokeAndAck(m) => out.extend(m.encode()),
             Self::UpdateFailMalformedHtlc(m) => out.extend(m.encode()),
             Self::ChannelAnnouncement(m) => out.extend(m.encode()),
             Self::NodeAnnouncement(m) => out.extend(m.encode()),
@@ -409,6 +417,7 @@ impl Message {
             msg_type::COMMITMENT_SIGNED => {
                 Ok(Self::CommitmentSigned(CommitmentSigned::decode(cursor)?))
             }
+            msg_type::REVOKE_AND_ACK => Ok(Self::RevokeAndAck(RevokeAndAck::decode(cursor)?)),
             msg_type::UPDATE_FAIL_MALFORMED_HTLC => Ok(Self::UpdateFailMalformedHtlc(
                 UpdateFailMalformedHtlc::decode(cursor)?,
             )),
@@ -955,6 +964,27 @@ mod tests {
         assert_eq!(decoded, Message::CommitmentSigned(msg));
     }
 
+    /// Valid `RevokeAndAck` message for testing.
+    fn sample_revoke_and_ack() -> RevokeAndAck {
+        let secp = Secp256k1::new();
+        let sk = SecretKey::from_slice(&[0x11; 32]).expect("valid secret");
+        let pk = PublicKey::from_secret_key(&secp, &sk);
+
+        RevokeAndAck {
+            channel_id: ChannelId::new([0xaa; CHANNEL_ID_SIZE]),
+            per_commitment_secret: [0xcd; PER_COMMITMENT_SECRET_SIZE],
+            next_per_commitment_point: pk,
+        }
+    }
+
+    #[test]
+    fn message_revoke_and_ack_roundtrip() {
+        let msg = sample_revoke_and_ack();
+        let encoded = Message::RevokeAndAck(msg.clone()).encode();
+        let decoded = Message::decode(&encoded).unwrap();
+        assert_eq!(decoded, Message::RevokeAndAck(msg));
+    }
+
     #[test]
     fn message_update_fail_malformed_htlc_roundtrip() {
         let msg = UpdateFailMalformedHtlc {
@@ -1236,6 +1266,10 @@ mod tests {
         assert_eq!(
             Message::CommitmentSigned(sample_commitment_signed()).msg_type(),
             msg_type::COMMITMENT_SIGNED
+        );
+        assert_eq!(
+            Message::RevokeAndAck(sample_revoke_and_ack()).msg_type(),
+            msg_type::REVOKE_AND_ACK
         );
         assert_eq!(
             Message::UpdateFailMalformedHtlc(UpdateFailMalformedHtlc {
