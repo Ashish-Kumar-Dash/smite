@@ -18,15 +18,15 @@ use crate::state::{CampaignState, RunnerState, Status};
 use crate::tmux;
 use crate::utils::shell_quote;
 
-/// Safety ceiling for startup verification.
+/// How long to wait for `fuzzer_stats` before treating alive runners as started.
 ///
-/// Genuine launch failures are caught immediately when a runner's tmux window
-/// dies (see `verify_startup`), so this only bounds an alive-but-hung runner.
-/// Nyx seed calibration can take several minutes because each exec restores a
-/// VM snapshot, so the ceiling is deliberately generous; its exact value is not
-/// load-bearing — it only prevents an indefinite hang. Kept comfortably above a
-/// measured fresh start (~45s) so a large seed corpus is not falsely failed.
-const VERIFY_TIMEOUT: Duration = Duration::from_mins(10);
+/// This is not a correctness gate: a runner whose window dies is caught within
+/// one `VERIFY_POLL_INTERVAL` (see `verify_startup`), and a large seed corpus can
+/// take minutes to calibrate before `fuzzer_stats` appears. So on deadline, live
+/// windows are handed off as running rather than failed. The value only bounds
+/// how long we block the terminal before that hand-off; kept short so a slow
+/// calibration is not held hostage to a long wait.
+const VERIFY_TIMEOUT: Duration = Duration::from_mins(1);
 
 /// How often to poll `fuzzer_stats` files during startup verification.
 const VERIFY_POLL_INTERVAL: Duration = Duration::from_secs(5);
@@ -310,13 +310,12 @@ fn existing_campaign_runner(output_dir: &Path, runners: u16) -> Option<PathBuf> 
 /// extracting the `fuzzer_pid` from each.
 ///
 /// `fuzzer_stats` is only written after AFL++ finishes calibrating every seed,
-/// which under Nyx can take minutes for a large corpus, so a plain wall-clock
-/// timeout produces false negatives. Instead, a runner whose tmux window has
-/// died before producing `fuzzer_stats` is reported as a launch failure
-/// immediately; the `timeout` only bounds a runner that stays alive but never
-/// starts fuzzing. `execute` rejects a pre-populated `output_dir` up front (see
-/// `existing_campaign_runner`), so a `fuzzer_stats` appearing here always
-/// belongs to this run.
+/// which under Nyx can take minutes for a large corpus. A runner whose window
+/// dies before producing `fuzzer_stats` is reported as a failure immediately.
+/// If `timeout` fires while windows are still alive, the campaign is marked
+/// running anyway as the runners are calibrating a large corpus. `execute`
+/// rejects a pre-populated `output_dir` up front (see `existing_campaign_runner`),
+/// so a `fuzzer_stats` appearing here always belongs to this run.
 fn verify_startup(
     session: &str,
     output_dir: &Path,
@@ -372,16 +371,37 @@ fn verify_startup(
         thread::sleep(VERIFY_POLL_INTERVAL);
     }
 
+    // Deadline reached. Check liveness one final time: alive_windows errors when
+    // the session is gone, so an Ok result is authoritative. Runners still alive
+    // are calibrating a large seed corpus; treat the campaign as running. PIDs
+    // remain None and `smitebot stop` reads them from tmux pane PIDs at teardown.
+    let alive = match tmux::alive_windows(session) {
+        Ok(a) => a,
+        Err(e) => {
+            log::error!("could not confirm runners are alive: {e}");
+            return false;
+        }
+    };
+    let mut all_alive = true;
     for runner in runners.iter() {
         if runner.pid.is_none() {
-            log::error!(
-                "runner {} did not produce fuzzer_stats within timeout",
-                runner.id
-            );
+            if alive.contains(&tmux::runner_window_name(runner.id)) {
+                log::warn!(
+                    "runner {} is still calibrating seeds; \
+                     attach to session '{session}' to monitor",
+                    runner.id
+                );
+            } else {
+                log::error!(
+                    "runner {} window is no longer alive; \
+                     inspect session '{session}'",
+                    runner.id
+                );
+                all_alive = false;
+            }
         }
     }
-
-    false
+    all_alive
 }
 
 /// Reads the `fuzzer_pid` field from a `fuzzer_stats` file.
@@ -687,8 +707,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut runners = vec![RunnerState { id: 0, pid: None }];
 
-        // No fuzzer_stats and no live tmux session — the ceiling is hit and the
-        // runner reported as unstarted. A near-zero timeout keeps the test fast.
+        // No fuzzer_stats and no live tmux session, alive_windows errors and
+        // the runner is reported as failed. A near-zero timeout keeps the test fast.
         assert!(!verify_startup(
             "no-such-session",
             dir.path(),
