@@ -4,8 +4,11 @@
 #
 # Usage: ./scripts/setup-nyx.sh <sharedir> <docker-image> <aflplusplus-path>
 #
+# Environment Variables:
+#   NYX_MEM_MB: Sets the memory allocation for the Nyx VM in MB (default: 2048).
+#
 # Example:
-#   ./scripts/setup-nyx.sh /tmp/smite-lnd-nyx smite-lnd ~/AFLplusplus
+#   NYX_MEM_MB=4096 ./scripts/setup-nyx.sh /tmp/smite-lnd-nyx smite-lnd ~/AFLplusplus
 #
 # Creates the necessary files in sharedir for snapshot fuzzing using
 # docker-image.  Requires that docker-image is already built and that AFL++ has
@@ -72,7 +75,12 @@ cat > "$FORCE_FORK_DIR/sitecustomize.py" <<'EOF'
 import multiprocessing
 multiprocessing.set_start_method("fork", force=True)
 EOF
-(cd "$PACKER_PATH" && PYTHONPATH="$FORCE_FORK_DIR${PYTHONPATH:+:$PYTHONPATH}" ./nyx_config_gen.py "$SHAREDIR" Kernel -m 4096)
+
+# The memory allocated to a single QEMU VM instance. Defaults to 2048 MB.
+NYX_MEM_MB="${NYX_MEM_MB:-2048}"
+echo "Using VM image size: ${NYX_MEM_MB} MB"
+
+(cd "$PACKER_PATH" && PYTHONPATH="$FORCE_FORK_DIR${PYTHONPATH:+:$PYTHONPATH}" ./nyx_config_gen.py "$SHAREDIR" Kernel -m "$NYX_MEM_MB")
 
 # Create fuzz_no_pt.sh script
 echo "Creating fuzz_no_pt.sh..."
