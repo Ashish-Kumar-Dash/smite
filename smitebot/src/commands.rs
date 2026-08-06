@@ -1,5 +1,6 @@
 pub mod build;
 pub mod config;
+pub mod corpus;
 pub mod doctor;
 pub mod print_ir;
 pub mod start;
@@ -8,6 +9,7 @@ pub mod stop;
 
 pub use build::{BuildArgs, BuildCommand};
 pub use config::{ConfigArgs, ConfigCommand};
+pub use corpus::{CorpusArgs, CorpusCommand};
 pub use doctor::{DoctorArgs, DoctorCommand};
 pub use print_ir::{PrintIrArgs, PrintIrCommand};
 pub use start::{StartArgs, StartCommand};

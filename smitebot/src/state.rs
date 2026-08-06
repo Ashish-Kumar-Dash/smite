@@ -41,6 +41,8 @@ pub struct CampaignState {
     pub tmux_session: String,
     /// State of each AFL++ runner process.
     pub runners: Vec<RunnerState>,
+    /// Path to the AFL++ source tree; used by `corpus minimize` to locate `afl-cmin`.
+    pub aflpp_path: Option<PathBuf>,
 }
 
 /// Lifecycle status of a campaign.
@@ -126,6 +128,7 @@ impl CampaignState {
             stop_time: None,
             tmux_session,
             runners: Vec::new(),
+            aflpp_path: Some(config.aflpp_path.clone()),
         }
     }
 
@@ -201,6 +204,7 @@ mod tests {
                     pid: Some(1235),
                 },
             ],
+            aflpp_path: Some(PathBuf::from("/home/user/AFLplusplus")),
         }
     }
 
@@ -349,5 +353,19 @@ sharedir = "/tmp/nyx"
 
         let loaded = CampaignState::load(&path).unwrap();
         assert_eq!(loaded.stop_time, None);
+    }
+
+    #[test]
+    fn load_defaults_aflpp_path_when_absent() {
+        // state.json files written before aflpp_path existed must still load.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        let json = serde_json::to_string(&sample_state()).unwrap();
+        let without = json.replace(r#","aflpp_path":"/home/user/AFLplusplus""#, "");
+        assert!(!without.contains("aflpp_path"));
+        fs::write(&path, without).unwrap();
+
+        let loaded = CampaignState::load(&path).unwrap();
+        assert_eq!(loaded.aflpp_path, None);
     }
 }
