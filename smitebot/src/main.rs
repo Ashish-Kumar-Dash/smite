@@ -11,8 +11,9 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 use commands::{
-    BuildArgs, BuildCommand, ConfigArgs, ConfigCommand, DoctorArgs, DoctorCommand, PrintIrArgs,
-    PrintIrCommand, StartArgs, StartCommand, StatusArgs, StatusCommand, StopArgs, StopCommand,
+    BuildArgs, BuildCommand, ConfigArgs, ConfigCommand, CorpusArgs, CorpusCommand, DoctorArgs,
+    DoctorCommand, PrintIrArgs, PrintIrCommand, StartArgs, StartCommand, StatusArgs, StatusCommand,
+    StopArgs, StopCommand,
 };
 
 #[derive(Debug, Parser)]
@@ -28,6 +29,8 @@ enum Commands {
     Build(BuildArgs),
     /// Validate a campaign configuration file.
     Config(ConfigArgs),
+    /// Manage fuzzing corpus: merge runner queues or minimize with `afl-cmin`.
+    Corpus(CorpusArgs),
     /// Validate host prerequisites for running Smite campaigns.
     Doctor(DoctorArgs),
     /// Decode a fuzzer input and print it as readable IR.
@@ -47,6 +50,7 @@ fn main() -> ExitCode {
     let success = match cli.command {
         Commands::Build(args) => BuildCommand::execute(&args),
         Commands::Config(args) => ConfigCommand::execute(&args),
+        Commands::Corpus(args) => CorpusCommand::execute(&args),
         Commands::Doctor(args) => DoctorCommand::execute(&args),
         Commands::PrintIr(args) => PrintIrCommand::execute(&args),
         Commands::Start(args) => StartCommand::execute(&args),

@@ -491,6 +491,7 @@ mod tests {
             runners: (0..runners)
                 .map(|id| RunnerState { id, pid: None })
                 .collect(),
+            aflpp_path: None,
         }
     }
 

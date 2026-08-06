@@ -165,3 +165,29 @@ smitebot print-ir output/default/crashes/id:000000,sig:06,...
 `<path>` is a path to a postcard-encoded IR program.
 
 The program is printed using the IR's `Display` format, the same textual form the `smite-ir` mutator emits in its trim logs. An empty program prints `(empty program)`.
+
+### smitebot corpus merge
+
+Collects all queue files from one or more campaign runner directories, deduplicates by content, and writes unique files to an output directory. Accepts multiple campaign IDs to merge corpora across independent runs.
+
+```bash
+smitebot corpus merge <campaign-id> -o <output-dir>
+smitebot corpus merge <campaign-id-1> <campaign-id-2> ... -o <output-dir>
+```
+
+- `<campaign-id>`: directory name(s) under `~/.smitebot/runs`
+- `-o, --output <output-dir>`: output directory for the merged corpus (required)
+
+### smitebot corpus minimize
+
+Removes corpus inputs that do not contribute new coverage, using `afl-cmin` in Nyx mode (`-X`). Reads `sharedir` and `aflpp_path` from the campaign's `state.json`; no live campaign required.
+
+```bash
+smitebot corpus minimize <campaign-id>
+smitebot corpus minimize <campaign-id> [-i <input>] [-o <output-dir>] [--aflpp-path <path>]
+```
+
+- `<campaign-id>`: directory name under `~/.smitebot/runs`
+- `-i, --input <input>`: input directory or glob pattern passed to `afl-cmin -i`; defaults to `<output_dir>/*/queue/` (all runner queues)
+- `-o, --output <output-dir>`: output directory; defaults to `~/.smitebot/runs/<id>/corpus-min/`
+- `--aflpp-path <path>`: AFL++ source tree, overriding the `aflpp_path` stored in `state.json` (useful when the checkout has moved)
