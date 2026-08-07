@@ -13,8 +13,8 @@ use smite::bolt::{
     OpenChannel, OpenChannelTlvs, Pong, ShortChannelId, Shutdown, msg_type,
 };
 use smite::channel_tx::{
-    ChannelConfig, ChannelPartyConfig, ChannelState, FundingTransaction, HolderIdentity, Side,
-    build_funding_transaction,
+    ChannelConfig, ChannelPartyConfig, ChannelState, CommitmentCost, FundingTransaction,
+    HolderIdentity, Side, build_funding_transaction,
 };
 use smite::noise::{ConnectionError, NoiseConnection};
 use smite::pending_channel::PendingChannel;
@@ -1330,7 +1330,12 @@ fn verify_funding_signed(
 
     // The opener cannot afford the fee, so the acceptor must not send
     // `funding_signed`. Receiving one is a protocol violation.
-    if !state.config.can_opener_afford_feerate(&state.commitment) {
+    let commitment_cost =
+        CommitmentCost::new(state.commitment.feerate_per_kw, &state.config.channel_type);
+    if (state.commitment.opener.balance_msat / 1000)
+        .checked_sub(commitment_cost.total_sat())
+        .is_none()
+    {
         return Err(Violation::OpenerCannotAffordFee(fs.channel_id));
     }
 
