@@ -75,8 +75,8 @@ order_impl_message_encode() {
 order_impl_message_decode() {
     impl_message_block | \
         awk '/^    pub fn decode/,/^    }/ { print }' | \
-        grep "MessageType::" | \
-        sed -e 's/MessageType:://' -e 's/ =>.*//' | \
+        grep -oE "MessageType::[A-Z0-9_]+ =>" | \
+        sed -e 's/MessageType:://' -e 's/ =>//' | \
         grep -v "Unknown" | \
         to_canonical
 }
@@ -96,7 +96,7 @@ order_tests() {
 order_tests_message_type_values() {
     tests_block | \
         awk '/^    fn message_type_values\(\) {/,/^    }/ { print }' | \
-        grep -oE "MessageType::[A-Za-z0-9_]+" | \
+        grep -oE "MessageType::[A-Z0-9_]+" | \
         sed 's/MessageType:://' | \
         to_canonical
 }

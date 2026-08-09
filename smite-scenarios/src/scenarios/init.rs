@@ -59,7 +59,7 @@ impl<T: Target> Scenario for InitScenario<T> {
         );
 
         // Send an init-typed message with fuzz payload.
-        let msg = bolt::message_with_type(bolt::MessageType::INIT.as_u16(), input);
+        let msg = bolt::message_with_type(bolt::MessageType::INIT, input);
         let truncated = &msg[..msg.len().min(MAX_MESSAGE_SIZE)];
         self.conn
             .send_message(truncated)
