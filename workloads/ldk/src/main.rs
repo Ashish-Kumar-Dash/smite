@@ -5,34 +5,17 @@
 //! ldk-node since we reset the VM after each fuzz iteration anyway.
 
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use ldk_node::Builder;
 use ldk_node::bitcoin::Network;
 
-/// Signal handler sets this to true to trigger shutdown.
-static SHUTDOWN: AtomicBool = AtomicBool::new(false);
-
-/// Set by the SIGUSR1 handler. bitcoind's `-blocknotify` sends SIGUSR1 on each
-/// new block so the main loop syncs immediately instead of waiting for the next
-/// 2s chain poll.
-static NEW_BLOCK: AtomicBool = AtomicBool::new(false);
-
-extern "C" fn handle_signal(_: libc::c_int) {
-    SHUTDOWN.store(true, Ordering::SeqCst);
-}
-
-extern "C" fn handle_block(_: libc::c_int) {
-    NEW_BLOCK.store(true, Ordering::SeqCst);
-}
-
 /// Path prefix the crash handler reads panic reports from.
 const PANIC_LOG_PATH: &str = "/tmp/smite-panic.log";
 
-/// Stores the panic message where the LD_PRELOADed crash handler can retrieve
+/// Stores the panic message where the `LD_PRELOADed` crash handler can retrieve
 /// it. With `panic = "abort"`, panics only reach stderr, which scenario/Nyx
-/// discards,so this allows crash reports to include the panic message and its
+/// discards, so this allows crash reports to include the panic message and its
 /// source location.
 fn install_panic_hook() {
     let path = format!("{PANIC_LOG_PATH}.{}", std::process::id());
@@ -45,18 +28,45 @@ fn install_panic_hook() {
     }));
 }
 
+/// Blocks SIGUSR1, SIGTERM, and SIGINT so they can be synchronously handled
+/// with `sigwait()`.
+///
+/// Blocking supersedes the disposition inherited across exec, which for SIGUSR1
+/// is `SIG_IGN` (set by the scenario's pre-exec hook, see `LdkTarget::start`).
+/// That distinction is the whole point: an *ignored* signal is discarded the
+/// moment it is delivered, while a *blocked* one stays pending until `sigwait()`
+/// consumes it, regardless of its disposition. So this call is what makes
+/// bitcoind's `-blocknotify` SIGUSR1 observable, and why nothing here calls
+/// `sigaction`: the wait loop below is the only consumer these signals need.
+///
+/// Standard signals do not queue, so a burst of SIGUSR1 collapses into one
+/// pending instance and thus one wakeup. That is fine here: each wakeup syncs
+/// the wallet against bitcoind's current tip, not against a single block.
+fn setup_signal_set() -> libc::sigset_t {
+    // SAFETY: `set` is zeroed and then initialized by `sigemptyset` before any
+    // read; every call receives a valid pointer to it. The null `oldset` is
+    // explicitly allowed by `pthread_sigmask`, which discards the previous mask.
+    unsafe {
+        let mut set: libc::sigset_t = std::mem::zeroed();
+
+        libc::sigemptyset(&raw mut set);
+        libc::sigaddset(&raw mut set, libc::SIGUSR1);
+        libc::sigaddset(&raw mut set, libc::SIGTERM);
+        libc::sigaddset(&raw mut set, libc::SIGINT);
+
+        let ret = libc::pthread_sigmask(libc::SIG_BLOCK, &raw const set, std::ptr::null_mut());
+        assert_eq!(ret, 0, "failed to block signals");
+
+        set
+    }
+}
+
 fn main() {
     install_panic_hook();
 
-    // Set up signal handlers for graceful shutdown
-    unsafe {
-        // Cast through pointer to satisfy Rust's function-to-integer cast rules
-        let sighandler = handle_signal as *const () as libc::sighandler_t;
-        libc::signal(libc::SIGTERM, sighandler);
-        libc::signal(libc::SIGINT, sighandler);
-        let blockhandler = handle_block as *const () as libc::sighandler_t;
-        libc::signal(libc::SIGUSR1, blockhandler);
-    }
+    // bitcoind's -blocknotify sends SIGUSR1 for each new block.
+    // SIGTERM/SIGINT are used for graceful shutdown.
+    let signal_set = setup_signal_set();
 
     let args: Vec<String> = std::env::args().collect();
     if args.len() != 5 {
@@ -99,25 +109,39 @@ fn main() {
         std::thread::sleep(Duration::from_secs(1));
     }
 
-    // Output for LdkTarget to parse
+    // Output for LdkTarget to parse.
     println!("PUBKEY:{}", node.node_id());
     println!("READY");
 
-    // Wait for shutdown signal
-    while !SHUTDOWN.load(Ordering::SeqCst) {
-        // Sync the wallet whenever bitcoind signals a new block. ldk-node's own
-        // 2s background poll keeps running, so this is technically redundant and
-        // may race it, but that's safe: ldk-node coalesces concurrent syncs, so
-        // whichever loses the race just waits on the in-flight sync's result
-        // rather than applying the block twice. We accept the redundancy to sync
-        // on the block instead of up to 2s later.
-        if NEW_BLOCK.swap(false, Ordering::SeqCst)
-            && let Err(e) = node.sync_wallets()
-        {
-            eprintln!("sync_wallets failed: {e}");
-        }
+    // Wait for signals. sigwait() blocks here without polling and returns
+    // immediately when bitcoind sends SIGUSR1 or the process receives
+    // SIGTERM/SIGINT.
+    loop {
+        let mut signal = 0;
 
-        std::thread::sleep(Duration::from_millis(50));
+        // SAFETY: both pointers refer to live locals, and `signal_set` was
+        // initialized by `setup_signal_set` above.
+        let ret = unsafe { libc::sigwait(&raw const signal_set, &raw mut signal) };
+        assert_eq!(ret, 0, "sigwait failed: {ret}");
+
+        match signal {
+            libc::SIGUSR1 => {
+                // Sync the wallet whenever bitcoind signals a new block.
+                // ldk-node's own 2s background poll keeps running, so this is
+                // technically redundant and may race it, but that's safe:
+                // ldk-node coalesces concurrent syncs, so whichever loses the
+                // race just waits on the in-flight sync's result rather than
+                // applying the block twice. We accept the redundancy to sync on
+                // the block instead of up to 2s later.
+                if let Err(e) = node.sync_wallets() {
+                    eprintln!("sync_wallets failed: {e}");
+                }
+            }
+            libc::SIGTERM | libc::SIGINT => {
+                break;
+            }
+            _ => unreachable!("received unexpected signal {signal}"),
+        }
     }
 
     node.stop().expect("node stop");
