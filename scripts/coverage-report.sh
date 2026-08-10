@@ -5,7 +5,7 @@
 # Usage: ./scripts/coverage-report.sh <target> <scenario> <corpus-dir> [output-dir]
 #
 # Targets:   lnd, cln, ldk, eclair
-# Scenarios: encrypted_bytes, noise, init
+# Scenarios: encrypted_bytes, noise, ir, init
 #
 # This script:
 # 1. Builds (if needed) a coverage-instrumented Docker image
@@ -19,7 +19,7 @@ if [ $# -lt 3 ]; then
     echo ""
     echo "Arguments:"
     echo "  target      Target implementation (lnd, cln, ldk, eclair)"
-    echo "  scenario    Scenario name (encrypted_bytes, noise, init)"
+    echo "  scenario    Scenario name (encrypted_bytes, noise, ir, init)"
     echo "  corpus-dir  Directory containing fuzz input files"
     echo "  output-dir  Output directory (default: ./<target>-<scenario>-coverage-report)"
     echo ""
@@ -95,6 +95,13 @@ if docker info 2>/dev/null | grep -q "rootless"; then
     DOCKER_USER=()
 fi
 
+# Run /tmp from an in-memory filesystem, matching the Nyx VM, which runs
+# entirely from initramfs. Avoiding disk I/O roughly halves target startup
+# time. exec is required because Eclair's JVM writes executable files (native
+# libraries extracted from JARs) into /tmp and cannot run them from a noexec
+# mount.
+DOCKER_TMPFS=(--tmpfs /tmp:rw,exec,size=1g)
+
 # Build coverage image if needed (use REBUILD=1 to force rebuild)
 if [ "${REBUILD:-}" = "1" ] || ! docker image inspect "$DOCKER_IMAGE" >/dev/null 2>&1; then
     SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -134,7 +141,7 @@ run_input() {
         rm -rf "$covdir"
         mkdir "$covdir"
 
-        docker run --rm "${DOCKER_USER[@]}" \
+        docker run --rm "${DOCKER_USER[@]}" "${DOCKER_TMPFS[@]}" \
             -v "$CORPUS_DIR:/corpus:ro" \
             -v "$covdir:/covdata" \
             -e SMITE_INPUT="/corpus/$input_name" \
@@ -229,7 +236,7 @@ echo "Merging coverage data and generating report..."
 # tools, so the merge step is necessarily target-specific.
 case "$TARGET" in
     lnd)
-        docker run --rm "${DOCKER_USER[@]}" \
+        docker run --rm "${DOCKER_USER[@]}" "${DOCKER_TMPFS[@]}" \
             -v "$OUTPUT_DIR:/output" \
             -e GOCACHE=/tmp/go-cache \
             -e GOPATH=/tmp/go \
@@ -258,7 +265,7 @@ case "$TARGET" in
         ;;
 
     cln|ldk)
-        docker run --rm "${DOCKER_USER[@]}" \
+        docker run --rm "${DOCKER_USER[@]}" "${DOCKER_TMPFS[@]}" \
             -v "$OUTPUT_DIR:/output" \
             -e TARGET="$TARGET" \
             "$DOCKER_IMAGE" \
@@ -306,7 +313,7 @@ case "$TARGET" in
         ;;
 
     eclair)
-        docker run --rm "${DOCKER_USER[@]}" \
+        docker run --rm "${DOCKER_USER[@]}" "${DOCKER_TMPFS[@]}" \
             -v "$OUTPUT_DIR:/output" \
             "$DOCKER_IMAGE" \
             sh -c '

@@ -17,7 +17,7 @@ if [ $# -ne 2 ]; then
     echo "Usage: $0 <scenario> <crash-log>"
     echo ""
     echo "Arguments:"
-    echo "  scenario   Scenario name (encrypted_bytes, noise, init)"
+    echo "  scenario   Scenario name (encrypted_bytes, noise, ir, init)"
     echo "  crash-log  File containing unsymbolized crash report"
     exit 1
 fi
@@ -67,7 +67,11 @@ for binary in "${!BINARY_OFFSETS[@]}"; do
 
     # llvm-symbolizer outputs pairs of lines (function, file:line:col) for each
     # address, including inlined functions. Blank lines separate addresses.
-    result=$(docker run --rm "$BUILDER_IMAGE" \
+    #
+    # /tmp runs from an in-memory filesystem so symbolizer scratch data never
+    # hits the disk. exec is kept for consistency with the other scripts, where
+    # Eclair's JVM needs to run native libraries it extracts into /tmp.
+    result=$(docker run --rm --tmpfs /tmp:rw,exec,size=1g "$BUILDER_IMAGE" \
         llvm-symbolizer --obj="$binary" "${offsets[@]}" 2>/dev/null) || true
 
     # Parse output using blank lines as address boundaries.
