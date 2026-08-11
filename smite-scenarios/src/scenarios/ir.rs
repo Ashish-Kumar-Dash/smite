@@ -106,8 +106,16 @@ impl<T: Target, S: SnapshotSetup<T>> Scenario for IrScenario<T, S> {
                 log::debug!("[{:?}] invalid commitment: {e}", start.elapsed());
             }
             Err(ExecuteError::Violation(v)) => {
-                // The target broke a protocol invariant.
-                return ScenarioResult::Fail(v.to_string());
+                let violation = v.to_string();
+                if T::is_violation_known(&violation) {
+                    log::debug!(
+                        "[{:?}] suppressed known violation: {violation}",
+                        start.elapsed(),
+                    );
+                } else {
+                    // The target broke a protocol invariant.
+                    return ScenarioResult::Fail(violation);
+                }
             }
         }
 

@@ -77,4 +77,39 @@ pub trait Target: Sized {
     ///
     /// Returns [`TargetError::Crashed`] if the target has crashed.
     fn check_alive(&mut self) -> Result<(), TargetError>;
+
+    /// Known protocol violations for this target that should be suppressed.
+    ///
+    /// Each entry is a sequence of patterns that must appear in the violation
+    /// message in the specified order, without overlapping. Include stable
+    /// context around variable parts to avoid suppressing unrelated violations.
+    ///
+    /// Every entry must describe the behavior justifying it, and be removed
+    /// once the upstream fix lands.
+    #[must_use]
+    fn known_violations() -> &'static [&'static [&'static str]] {
+        &[]
+    }
+
+    /// Check if a violation matches a known pattern for this target.
+    #[must_use]
+    fn is_violation_known(violation: &str) -> bool {
+        Self::known_violations()
+            .iter()
+            .any(|pattern| Self::contains_in_order(violation, pattern))
+    }
+
+    /// Returns true if every fragment in a pattern appears in the violation
+    /// message in the specified order, without overlapping.
+    #[must_use]
+    fn contains_in_order(violation: &str, pattern: &[&str]) -> bool {
+        let mut pos = 0;
+        for fragment in pattern {
+            match violation[pos..].find(fragment) {
+                Some(offset) => pos += offset + fragment.len(),
+                None => return false,
+            }
+        }
+        true
+    }
 }
