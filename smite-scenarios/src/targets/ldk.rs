@@ -90,11 +90,17 @@ impl LdkTarget {
             cmd.env("LD_PRELOAD", handler);
         }
 
-        // Ignore SIGUSR1 until main() installs the real handler. Initial-block
-        // generation triggers a burst of asynchronous `-blocknotify`
-        // (`pkill -USR1`), and a stray one landing before the handler is set
+        // Ignore SIGUSR1 for the window between exec and the wrapper blocking
+        // it. Initial-block generation triggers a burst of asynchronous
+        // `-blocknotify` (`pkill -USR1`), and a stray one landing in that window
         // would kill the wrapper, since SIGUSR1 is fatal by default. SIG_IGN
         // survives exec; a caught handler would not.
+        //
+        // Signals arriving while SIG_IGN is in effect are dropped, but that ends
+        // once the wrapper calls `pthread_sigmask(SIG_BLOCK)`: blocking wins over
+        // the disposition, so SIGUSR1 then stays pending for `sigwait()` instead
+        // of being discarded. SIG_IGN therefore stays in effect for the whole run
+        // and the wrapper never needs to replace it.
         //
         // SAFETY: runs in the child after fork, before exec; calls only the
         // async-signal-safe `signal`.
