@@ -11,3 +11,13 @@ panic = "abort"
 [dependencies]
 ldk-node = "0.7"
 libc = "0.2"
+
+[lints]
+workspace = true
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+
+[workspace.lints.rust]
+warnings = "deny"

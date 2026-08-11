@@ -23,6 +23,10 @@ jobs:
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            workloads/ldk
 
       - name: Install taplo
         run: curl -fsSL https://github.com/tamasfe/taplo/releases/latest/download/taplo-linux-x86_64.gz | gzip -d - | install -m 755 /dev/stdin /usr/local/bin/taplo
@@ -31,13 +35,17 @@ jobs:
         run: taplo format --check
 
       - name: Check Rust formatting
-        run: cargo fmt --all --check
+        run: |
+          cargo fmt --all --check
+          cargo fmt --check --manifest-path workloads/ldk/Cargo.toml
 
       - name: Check order of BOLT message type constants
         run: scripts/check-bolt-msg-type-order.sh
 
       - name: Run Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: |
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo clippy --all-targets --manifest-path workloads/ldk/Cargo.toml -- -D warnings
 
       - name: Build
         run: cargo build --verbose
