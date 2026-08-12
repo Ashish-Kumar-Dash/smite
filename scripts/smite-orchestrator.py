@@ -47,6 +47,8 @@ Usage:
     --afl-dir AFL_DIR \
     [--trials N | --trial-ids ID[,ID...]] \
     [--timeout SECONDS] \
+    [--exec-timeout MS] \
+    [--hang-timeout MS] \
     [--seed-dir SEED_DIR]
 
 Examples:
@@ -145,6 +147,8 @@ class TrialConfig:
     smite_dir: Path
     afl_dir: Path
     timeout: int
+    exec_timeout: int
+    hang_timeout: int
     seed_dir: Path
 
     @property
@@ -203,6 +207,8 @@ class TrialConfig:
             POWER_SCHEDULE,
             "-V",
             str(self.timeout),
+            "-t",
+            str(self.exec_timeout),
             "--",
             str(self.sharedir),
         ]
@@ -215,6 +221,7 @@ class TrialConfig:
                 "AFL_NO_UI": "1",
                 "AFL_NO_COLOR": "1",
                 "AFL_FORKSRV_INIT_TMOUT": "1800000",
+                "AFL_HANG_TMOUT": str(self.hang_timeout),
             }
         )
         testcache = testcache_size_mb()
@@ -836,6 +843,8 @@ def worker_thread(core: int, work: Queue, args, state: CampaignState, smite_dirs
             smite_dir=smite_dirs[label],
             afl_dir=args.afl_dir,
             timeout=args.timeout,
+            exec_timeout=args.exec_timeout,
+            hang_timeout=args.hang_timeout,
             seed_dir=args.seed_dir,
         )
 
@@ -882,6 +891,15 @@ def parse_args():
         help="Comma-separated trial numbers to run, e.g. '1,5,15'. Overrides --trials.",
     )
     p.add_argument("--timeout", type=int, default=86400)
+    p.add_argument(
+        "--exec-timeout", type=int, default=2000, help="AFL++ exec timeout in ms (-t)"
+    )
+    p.add_argument(
+        "--hang-timeout",
+        type=int,
+        default=4000,
+        help="AFL++ hang timeout in ms (AFL_HANG_TMOUT)",
+    )
     p.add_argument("--seed-dir", type=Path)
 
     args = p.parse_args()
