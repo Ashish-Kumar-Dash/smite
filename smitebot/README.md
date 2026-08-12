@@ -184,10 +184,10 @@ Removes corpus inputs that do not contribute new coverage, using `afl-cmin` in N
 
 ```bash
 smitebot corpus minimize <campaign-id>
-smitebot corpus minimize <campaign-id> [-i <input>] [-o <output-dir>] [--aflpp-path <path>]
+smitebot corpus minimize <campaign-id> [-i <dir>]... [-o <output-dir>] [--aflpp-path <path>]
 ```
 
 - `<campaign-id>`: directory name under `~/.smitebot/runs`
-- `-i, --input <input>`: input directory or glob pattern passed to `afl-cmin -i`; defaults to `<output_dir>/*/queue/` (all runner queues)
+- `-i, --input <dir>`: One input directory to minimize. If multiple `-i` flags are present, all specified directories are merged before minimizing. If omitted, the campaign's runner queues are merged and minimized.
 - `-o, --output <output-dir>`: output directory; defaults to `~/.smitebot/runs/<id>/corpus-min/`
 - `--aflpp-path <path>`: AFL++ source tree, overriding the `aflpp_path` stored in `state.json` (useful when the checkout has moved)
