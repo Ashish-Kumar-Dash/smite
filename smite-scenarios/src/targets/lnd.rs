@@ -316,4 +316,13 @@ impl Target for LndTarget {
         }
         Ok(())
     }
+
+    /// Known violations suppressed until fixed upstream:
+    ///
+    /// - LND allows `open_channel` with an omitted `channel_type`, violating
+    ///   BOLT 2 even though it signals the required `option_channel_type` feature.
+    ///   See: <https://github.com/lightningnetwork/lnd/pull/11064>
+    fn known_violations() -> &'static [&'static [&'static str]] {
+        &[&["accepted invalid open_channel: open_channel does not include a channel_type"]]
+    }
 }

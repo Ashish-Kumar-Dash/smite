@@ -248,4 +248,28 @@ impl Target for ClnTarget {
         }
         Ok(())
     }
+
+    /// Known violations suppressed until fixed upstream:
+    ///
+    /// - CLN currently allows `funding_satoshis` values above the total Bitcoin
+    ///   supply during `open_channel` and `accept_channel` negotiation. These
+    ///   values should be rejected early, as they cannot result in a valid
+    ///   channel. See: <https://github.com/ElementsProject/lightning/pull/9368>
+    ///
+    /// - CLN currently allows `dust_limit_satoshis` values below 354 during
+    ///   `open_channel` negotiation. These values should be rejected early, as
+    ///   required by BOLT 2.
+    ///   See: <https://github.com/ElementsProject/lightning/issues/9403>
+    fn known_violations() -> &'static [&'static [&'static str]] {
+        &[
+            &[
+                "accepted invalid open_channel: funding_satoshis",
+                "exceeds maximum funding of 2100000000000000 sat",
+            ],
+            &[
+                "accepted invalid open_channel: dust_limit_satoshis",
+                "is below the minimum of 354 sat",
+            ],
+        ]
+    }
 }
