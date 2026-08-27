@@ -961,17 +961,25 @@ fn build_funding_created(
         open_channel.funding_satoshis,
     );
 
-    // Building the same message again must not clobber a channel whose state
-    // has already been established (and possibly advanced).
-    channel_states.entry(channel_id).or_insert_with(|| {
-        ChannelState::new(
-            config,
-            holder,
-            state,
-            is_funding_outpoint_valid,
-            mined_txids.contains(&funding_outpoint.txid),
-        )
-    });
+    // Only track a new channel when this negotiation has not built a
+    // `funding_created` yet. If it has, we are likely resending one for the
+    // same `temporary_channel_id` with a different outpoint, which the target
+    // may ignore (LND and Eclair currently do), leaving us tracking a channel
+    // it never opened.
+    //
+    // This also means that building the same message again must not clobber a
+    // channel whose state has already been established (and possibly advanced).
+    if !pending.funding_built {
+        channel_states.entry(channel_id).or_insert_with(|| {
+            ChannelState::new(
+                config,
+                holder,
+                state,
+                is_funding_outpoint_valid,
+                mined_txids.contains(&funding_outpoint.txid),
+            )
+        });
+    }
 
     // Mark this negotiation as having built `funding_created`. It is retained
     // so repeated `funding_created` messages can still be built, but a later
@@ -3427,6 +3435,63 @@ mod tests {
             .get(&ChannelId::new([0xbb; 32]))
             .unwrap();
         assert!(pending.funding_built);
+    }
+
+    #[test]
+    fn execute_send_funding_created_after_funding_built_does_not_track_channel() {
+        // A second UTXO so the program can build a second funding transaction.
+        let second_utxo = Utxo {
+            outpoint: OutPoint {
+                vout: 1,
+                ..sample_utxo().outpoint
+            },
+            ..sample_utxo()
+        };
+        let mock_cli = MockBitcoinCli {
+            utxos: vec![sample_utxo(), second_utxo],
+            change_spk: sample_change_spk(),
+            ..Default::default()
+        };
+
+        // Channel id derived from the first funding transaction's outpoint.
+        let channel_id = ChannelId::v1_from_funding_outpoint(OutPoint {
+            txid: "09b0549b35f14ee862f63bd75811c6c27963c4dea6766ec6836952ec78df1e7e"
+                .parse()
+                .unwrap(),
+            vout: 0,
+        });
+
+        let mut instrs = send_funding_created_and_recv_funding_signed_instructions();
+        instrs.pop(); // Drop the trailing `RecvFundingSigned` instruction.
+        instrs.extend(vec![
+            // Different funding spk, hence a different outpoint.
+            Instruction {
+                operation: Operation::CreateFundingTransaction,
+                inputs: vec![1, 1, 4, 5],
+            },
+            Instruction {
+                operation: Operation::SendFundingCreated,
+                inputs: vec![10, 0, 8],
+            },
+        ]);
+
+        let mut executor = Executor::new(MockConnection::new(), mock_cli, sample_context());
+        executor
+            .negotiations
+            .insert(ChannelId::new([0xbb; 32]), sample_funding_negotiation());
+        executor
+            .execute(
+                &Program {
+                    instructions: instrs,
+                },
+                std::time::Instant::now(),
+            )
+            .unwrap();
+
+        // The message still goes out, only the state tracking is suppressed.
+        assert_eq!(executor.conn.sent.len(), 2);
+        assert_eq!(executor.channel_states.len(), 1);
+        assert!(executor.channel_states.contains_key(&channel_id));
     }
 
     #[test]
