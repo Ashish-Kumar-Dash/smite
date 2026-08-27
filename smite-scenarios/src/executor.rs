@@ -910,11 +910,9 @@ fn build_funding_created(
 
     let opener_funding_privkey =
         SecretKey::from_slice(&opener_funding_privkey_bytes).expect("valid private key");
-    let secp = Secp256k1::new();
-    let opener_funding_pubkey = PublicKey::from_secret_key(&secp, &opener_funding_privkey);
 
     let opener = ChannelPartyConfig {
-        funding_pubkey: opener_funding_pubkey,
+        funding_pubkey: open_channel.funding_pubkey,
         payment_basepoint: open_channel.payment_basepoint,
         revocation_basepoint: open_channel.revocation_basepoint,
         delayed_payment_basepoint: open_channel.delayed_payment_basepoint,
@@ -3438,6 +3436,76 @@ mod tests {
     }
 
     #[test]
+    fn execute_send_funding_created_uses_wire_funding_pubkey() {
+        let mock_cli = MockBitcoinCli {
+            utxos: vec![sample_utxo()],
+            change_spk: sample_change_spk(),
+            ..Default::default()
+        };
+
+        let channel_id = ChannelId::v1_from_funding_outpoint(OutPoint {
+            txid: "09b0549b35f14ee862f63bd75811c6c27963c4dea6766ec6836952ec78df1e7e"
+                .parse()
+                .unwrap(),
+            vout: 0,
+        });
+
+        // The same acceptor signature as the happy path (computed using LDK as
+        // the source of truth): computed over the the commitment implied by the
+        // negotiated funding pubkeys.
+        let fs_bytes = Message::FundingSigned(FundingSigned {
+            channel_id,
+            signature: "304402203dbf3dbf337b042a72576488c1fb019086089d8d790a47f652346cff2511b6e70220395fdf700cb82b0abfcfe8e0b7c822181f2ee72409c82c3ff8e04e36593662c7".parse().unwrap(),
+        })
+        .encode();
+
+        // Swap out the SendFundingCreated privkey. This should not affect the
+        // constructed channel config, which uses the negotiated pubkeys. It
+        // should only change the signature sent to the target.
+        let mut instrs = send_funding_created_and_recv_funding_signed_instructions();
+        instrs[9].inputs[1] = 2;
+
+        let mut executor = Executor::new(MockConnection::new(), mock_cli, sample_context());
+        executor.conn.queue_recv(fs_bytes);
+        executor
+            .negotiations
+            .insert(ChannelId::new([0xbb; 32]), sample_funding_negotiation());
+        // The acceptor's funding_signed still verifies, because the config is
+        // built from the wire pubkeys rather than from the swapped privkey.
+        executor
+            .execute(
+                &Program {
+                    instructions: instrs,
+                },
+                std::time::Instant::now(),
+            )
+            .unwrap();
+
+        let secp = Secp256k1::new();
+        let opener_pk = PublicKey::from_secret_key(
+            &secp,
+            &SecretKey::from_str(
+                "30ff4956bbdd3222d44cc5e8a1261dab1e07957bdac5ae88fe3261ef321f3749",
+            )
+            .unwrap(),
+        );
+        // The funding pubkey matches what was negotiated.
+        let state = executor.channel_states.get(&channel_id).unwrap();
+        assert_eq!(state.config.opener.funding_pubkey, opener_pk);
+        // But the swapped privkey used for signing is the acceptor's, which
+        // does not match what was negotiated.
+        assert_eq!(
+            state.holder.funding_privkey,
+            SecretKey::from_str("1552dfba4f6cf29a62a0af13c8d6981d36d0ef8d61ba10fb0fe90da7634d7e13")
+                .unwrap()
+        );
+        assert_ne!(
+            state.config.opener.funding_pubkey,
+            PublicKey::from_secret_key(&secp, &state.holder.funding_privkey)
+        );
+    }
+
+    #[test]
     fn execute_send_funding_created_after_funding_built_does_not_track_channel() {
         // A second UTXO so the program can build a second funding transaction.
         let second_utxo = Utxo {
@@ -3943,7 +4011,14 @@ mod tests {
             .open_channel
             .funding_pubkey = sample_pubkey(1);
 
+        // The corrupted pubkey changes the funding script, so our precomputed
+        // funding_signed signature will no longer verify correctly. That
+        // exchange is not what this test is about, we just skip receiving the
+        // funding_signed.
         let mut instrs = send_funding_created_and_recv_funding_signed_instructions();
+        instrs.pop();
+        executor.conn.recv_queue.pop_front();
+
         instrs.extend([
             Instruction {
                 operation: Operation::MineBlocks(8),
