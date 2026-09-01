@@ -164,8 +164,15 @@ fn verify_accept_channel(
         return Err("accept_channel does not include a channel_type".to_string());
     };
 
-    // Check that the channel type matches the one in open_channel.
-    if open_channel.tlvs.channel_type != accept_channel.tlvs.channel_type {
+    // Check that the channel type matches the one in open_channel in minimal
+    // form.
+    let open_channel_type = open_channel
+        .tlvs
+        .channel_type
+        .as_deref()
+        .map(Features::from)
+        .expect("open_channel channel_type is verified before the accept_channel");
+    if open_channel_type != channel_type {
         return Err("accept_channel channel_type does not match open_channel".to_string());
     }
 
@@ -503,6 +510,14 @@ mod tests {
             Some(&pending_negotiation(open_channel())),
             "invalid accept_channel: accept_channel channel_type does not match open_channel",
         );
+    }
+
+    #[test]
+    fn accept_channel_channel_type_matches_padded_open_channel() {
+        let mut oc = open_channel();
+        oc.tlvs.channel_type = Some(vec![0x00, 0x00, 0x10, 0x00]);
+
+        assert_pass(&accept_channel(), Some(&pending_negotiation(oc)));
     }
 
     #[test]
