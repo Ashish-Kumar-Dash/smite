@@ -47,6 +47,8 @@ Usage:
     --afl-dir AFL_DIR \
     [--trials N | --trial-ids ID[,ID...]] \
     [--timeout SECONDS] \
+    [--exec-timeout MS] \
+    [--hang-timeout MS] \
     [--seed-dir SEED_DIR]
 
 Examples:
@@ -145,6 +147,8 @@ class TrialConfig:
     smite_dir: Path
     afl_dir: Path
     timeout: int
+    exec_timeout: int
+    hang_timeout: int
     seed_dir: Path
 
     @property
@@ -203,6 +207,8 @@ class TrialConfig:
             POWER_SCHEDULE,
             "-V",
             str(self.timeout),
+            "-t",
+            str(self.exec_timeout),
             "--",
             str(self.sharedir),
         ]
@@ -215,6 +221,7 @@ class TrialConfig:
                 "AFL_NO_UI": "1",
                 "AFL_NO_COLOR": "1",
                 "AFL_FORKSRV_INIT_TMOUT": "1800000",
+                "AFL_HANG_TMOUT": str(self.hang_timeout),
             }
         )
         testcache = testcache_size_mb()
@@ -836,6 +843,8 @@ def worker_thread(core: int, work: Queue, args, state: CampaignState, smite_dirs
             smite_dir=smite_dirs[label],
             afl_dir=args.afl_dir,
             timeout=args.timeout,
+            exec_timeout=args.exec_timeout,
+            hang_timeout=args.hang_timeout,
             seed_dir=args.seed_dir,
         )
 
@@ -865,6 +874,31 @@ def ensure_seed_dir(args, console: Console):
     )
 
 
+def save_commit_metadata(out_dir: Path, smite_dirs: dict, console: Console):
+    """Extracts the latest git commit hash and date, saving them to the output directory."""
+    for label, smite_dir in smite_dirs.items():
+        config_out = out_dir / label
+        config_out.mkdir(parents=True, exist_ok=True)
+
+        try:
+            # %h = abbreviated hash, %cd = commit date
+            res = subprocess.run(
+                ["git", "log", "-1", "--format=%h (%cd)", "--date=short"],
+                cwd=smite_dir,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            commit_info = res.stdout.strip()
+        except Exception:
+            commit_info = "Unknown commit"
+            console.print(
+                f"[yellow]Warning: Could not get git info for '{label}' in {smite_dir}[/]"
+            )
+
+        (config_out / "latest_commit.txt").write_text(commit_info + "\n")
+
+
 def parse_args():
     """Parse CLI args and resolve all filesystem paths to absolute up front."""
     p = argparse.ArgumentParser(
@@ -882,6 +916,15 @@ def parse_args():
         help="Comma-separated trial numbers to run, e.g. '1,5,15'. Overrides --trials.",
     )
     p.add_argument("--timeout", type=int, default=86400)
+    p.add_argument(
+        "--exec-timeout", type=int, default=2000, help="AFL++ exec timeout in ms (-t)"
+    )
+    p.add_argument(
+        "--hang-timeout",
+        type=int,
+        default=4000,
+        help="AFL++ hang timeout in ms (AFL_HANG_TMOUT)",
+    )
     p.add_argument("--seed-dir", type=Path)
 
     args = p.parse_args()
@@ -912,6 +955,8 @@ def main():
             smite_dirs[l] = Path(d.strip()).expanduser().resolve()
     except ValueError:
         sys.exit("ERROR: --configs must use 'label:smite_dir' format")
+
+    save_commit_metadata(args.out_dir, smite_dirs, console)
 
     EnvironmentManager.validate(args.afl_dir, smite_dirs, console)
     EnvironmentManager.validate_paths(args.afl_dir, smite_dirs, console)
