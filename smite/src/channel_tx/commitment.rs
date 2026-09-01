@@ -1,6 +1,7 @@
 //! BOLT 3 commitment transaction construction and signing.
 
 use super::funding::build_funding_witness_script;
+use crate::bolt::Features;
 
 use bitcoin::absolute::LockTime;
 use bitcoin::hashes::sha256::Hash as Sha256;
@@ -23,9 +24,6 @@ const COMMITMENT_TX_BASE_WEIGHT_NON_ANCHOR: u64 = 724;
 
 /// Weight of an anchor commitment transaction without HTLCs.
 const COMMITMENT_TX_BASE_WEIGHT_ANCHOR: u64 = 1124;
-
-/// `option_anchors` feature bits (BOLT 9, bits 22/23).
-const OPTION_ANCHORS_FEATURE_BITS: &[usize] = &[22, 23];
 
 /// Errors that can occur when constructing or validating commitment transactions.
 #[derive(Debug, thiserror::Error)]
@@ -77,7 +75,7 @@ pub struct ChannelConfig {
     pub funding_satoshis: u64,
     /// Channel type feature bits. The commitment format (anchor / legacy) is
     /// derived from the bits set here.
-    pub channel_type: Vec<u8>,
+    pub channel_type: Features,
     /// Opener's static keys and parameters.
     pub opener: ChannelPartyConfig,
     /// Acceptor's static keys and parameters.
@@ -383,7 +381,7 @@ impl ChannelConfig {
     /// `local_side` selects whose commitment outputs are built: the
     /// opener's or the acceptor's.
     fn build_commitment_outputs(&self, state: &CommitmentState, local_side: &Side) -> Vec<TxOut> {
-        let anchor = supports_option_anchors(&self.channel_type);
+        let anchor = self.channel_type.supports_feature(Features::OPTION_ANCHORS);
 
         // Fee and balances.
         let commitment_cost = CommitmentCost::new(state.feerate_per_kw, &self.channel_type);
@@ -471,7 +469,7 @@ impl CommitmentState {
 impl CommitmentCost {
     /// Calculates the total cost of a commitment transaction.
     #[must_use]
-    pub fn new(feerate_per_kw: u32, channel_type: &[u8]) -> CommitmentCost {
+    pub fn new(feerate_per_kw: u32, channel_type: &Features) -> CommitmentCost {
         CommitmentCost {
             fee_sat: commit_tx_fee_sat(feerate_per_kw, channel_type),
             anchor_cost_sat: total_anchors_sat(channel_type),
@@ -486,8 +484,8 @@ impl CommitmentCost {
 }
 
 /// Get the fee cost of a commitment tx in satoshis.
-fn commit_tx_fee_sat(feerate_per_kw: u32, channel_type: &[u8]) -> u64 {
-    let commitment_weight = if supports_option_anchors(channel_type) {
+fn commit_tx_fee_sat(feerate_per_kw: u32, channel_type: &Features) -> u64 {
+    let commitment_weight = if channel_type.supports_feature(Features::OPTION_ANCHORS) {
         COMMITMENT_TX_BASE_WEIGHT_ANCHOR
     } else {
         COMMITMENT_TX_BASE_WEIGHT_NON_ANCHOR
@@ -497,8 +495,8 @@ fn commit_tx_fee_sat(feerate_per_kw: u32, channel_type: &[u8]) -> u64 {
 }
 
 /// Get the anchor cost of a commitment tx in satoshis.
-fn total_anchors_sat(channel_type: &[u8]) -> u64 {
-    if supports_option_anchors(channel_type) {
+fn total_anchors_sat(channel_type: &Features) -> u64 {
+    if channel_type.supports_feature(Features::OPTION_ANCHORS) {
         ANCHOR_OUTPUT_VALUE * 2
     } else {
         0
@@ -526,24 +524,6 @@ fn compute_obscuring_factor(
     let mut buf = [0u8; 8];
     buf[2..].copy_from_slice(&hash[26..32]);
     u64::from_be_bytes(buf)
-}
-
-/// Checks whether `option_anchors` (BOLT 9, bits 22/23) is set in a
-/// big-endian `channel_type` feature bitfield.
-///
-/// Per BOLT 9, even bit (22) = required, odd bit (23) = optional.
-/// Either bit indicates anchor support.
-fn supports_option_anchors(channel_type: &[u8]) -> bool {
-    let byte_offset = OPTION_ANCHORS_FEATURE_BITS[0] / 8;
-    let len = channel_type.len();
-    if len <= byte_offset {
-        return false;
-    }
-
-    let required_mask = 1 << (OPTION_ANCHORS_FEATURE_BITS[0] % 8);
-    let optional_mask = 1 << (OPTION_ANCHORS_FEATURE_BITS[1] % 8);
-
-    channel_type[len - 1 - byte_offset] & (required_mask | optional_mask) != 0
 }
 
 /// Derives a public key from a basepoint and per-commitment point per BOLT 3.
@@ -688,25 +668,12 @@ mod tests {
         assert_eq!(factor, 0x2bb0_3852_1914);
     }
 
-    #[test]
-    fn supports_option_anchors_detection() {
-        // Required (bit 22), optional (bit 23).
-        assert!(supports_option_anchors(&[0x40, 0x00, 0x00]));
-        assert!(supports_option_anchors(&[0x80, 0x00, 0x00]));
-        // No support.
-        assert!(!supports_option_anchors(&[0x00, 0x00, 0x40]));
-        assert!(!supports_option_anchors(&[0x00, 0x00, 0x80]));
-        assert!(!supports_option_anchors(&[]));
-        assert!(!supports_option_anchors(&[0xff, 0xff]));
-        assert!(!supports_option_anchors(&[0x00, 0x10]));
-    }
-
     fn bolt3_commitment_params(
         feerate_per_kw: u32,
         to_opener_msat: u64,
         to_acceptor_msat: u64,
         dust_limit_satoshis: u64,
-        channel_type: Vec<u8>,
+        channel_type: Features,
     ) -> (
         ChannelConfig,
         CommitmentState,
@@ -794,7 +761,13 @@ mod tests {
     #[test]
     fn simple_commitment_tx_with_no_htlcs_legacy() {
         let (chan_config, commitment_params, opener_holder, acceptor_holder) =
-            bolt3_commitment_params(15_000, 7_000_000_000, 3_000_000_000, 546, vec![]);
+            bolt3_commitment_params(
+                15_000,
+                7_000_000_000,
+                3_000_000_000,
+                546,
+                Features::from_bits(&[Features::OPTION_STATIC_REMOTEKEY]),
+            );
 
         // Opener signs own commitment.
         assert_eq!(
@@ -830,7 +803,13 @@ mod tests {
     #[test]
     fn commitment_tx_with_two_outputs_untrimmed_minimum_feerate_legacy() {
         let (chan_config, commitment_params, opener_holder, acceptor_holder) =
-            bolt3_commitment_params(4_915, 6_988_000_000, 3_000_000_000, 546, vec![]);
+            bolt3_commitment_params(
+                4_915,
+                6_988_000_000,
+                3_000_000_000,
+                546,
+                Features::from_bits(&[Features::OPTION_STATIC_REMOTEKEY]),
+            );
 
         // Opener signs own commitment.
         assert_eq!(
@@ -866,7 +845,13 @@ mod tests {
     #[test]
     fn commitment_tx_with_two_outputs_untrimmed_maximum_feerate_legacy() {
         let (chan_config, commitment_params, opener_holder, acceptor_holder) =
-            bolt3_commitment_params(9_651_180, 6_988_000_000, 3_000_000_000, 546, vec![]);
+            bolt3_commitment_params(
+                9_651_180,
+                6_988_000_000,
+                3_000_000_000,
+                546,
+                Features::from_bits(&[Features::OPTION_STATIC_REMOTEKEY]),
+            );
 
         // Opener signs own commitment.
         assert_eq!(
@@ -902,7 +887,13 @@ mod tests {
     #[test]
     fn commitment_tx_with_one_output_untrimmed_minimum_feerate_legacy() {
         let (chan_config, commitment_params, opener_holder, acceptor_holder) =
-            bolt3_commitment_params(9_651_181, 6_988_000_000, 3_000_000_000, 546, vec![]);
+            bolt3_commitment_params(
+                9_651_181,
+                6_988_000_000,
+                3_000_000_000,
+                546,
+                Features::from_bits(&[Features::OPTION_STATIC_REMOTEKEY]),
+            );
 
         // Opener signs own commitment.
         assert_eq!(
@@ -938,7 +929,13 @@ mod tests {
     #[test]
     fn commitment_tx_with_fee_greater_than_funder_amount_legacy() {
         let (chan_config, commitment_params, opener_holder, acceptor_holder) =
-            bolt3_commitment_params(9_651_936, 6_988_000_000, 3_000_000_000, 546, vec![]);
+            bolt3_commitment_params(
+                9_651_936,
+                6_988_000_000,
+                3_000_000_000,
+                546,
+                Features::from_bits(&[Features::OPTION_STATIC_REMOTEKEY]),
+            );
 
         // Opener signs own commitment.
         assert_eq!(
@@ -976,7 +973,13 @@ mod tests {
     #[test]
     fn commitment_tx_with_balance_msat_not_multiple_of_1000_legacy() {
         let (chan_config, commitment_params, opener_holder, acceptor_holder) =
-            bolt3_commitment_params(15_000, 6_999_999_000, 3_000_000_123, 546, vec![]);
+            bolt3_commitment_params(
+                15_000,
+                6_999_999_000,
+                3_000_000_123,
+                546,
+                Features::from_bits(&[Features::OPTION_STATIC_REMOTEKEY]),
+            );
 
         // Opener signs own commitment.
         assert_eq!(
@@ -1014,7 +1017,13 @@ mod tests {
     #[test]
     fn commitment_tx_with_equal_output_values_orders_by_script_pubkey_legacy() {
         let (chan_config, commitment_params, opener_holder, acceptor_holder) =
-            bolt3_commitment_params(15_000, 5_005_430_000, 4_994_570_000, 546, vec![]);
+            bolt3_commitment_params(
+                15_000,
+                5_005_430_000,
+                4_994_570_000,
+                546,
+                Features::from_bits(&[Features::OPTION_STATIC_REMOTEKEY]),
+            );
 
         // Opener signs own commitment.
         assert_eq!(
@@ -1058,7 +1067,7 @@ mod tests {
                 7_000_000_000,
                 3_000_000_000,
                 546,
-                vec![0x40, 0x00, 0x00],
+                Features::from_bits(&[Features::OPTION_ANCHORS]),
             );
 
         // Opener signs own commitment.
@@ -1095,7 +1104,13 @@ mod tests {
     #[test]
     fn simple_commitment_tx_with_no_htlc_and_single_anchor() {
         let (chan_config, commitment_params, opener_holder, acceptor_holder) =
-            bolt3_commitment_params(15_000, 10_000_000_000, 0, 546, vec![0x40, 0x00, 0x00]);
+            bolt3_commitment_params(
+                15_000,
+                10_000_000_000,
+                0,
+                546,
+                Features::from_bits(&[Features::OPTION_ANCHORS]),
+            );
 
         // Opener signs own commitment.
         assert_eq!(
@@ -1136,7 +1151,7 @@ mod tests {
                 6_988_000_000,
                 3_000_000_000,
                 4_001,
-                vec![0x40, 0x00, 0x00],
+                Features::from_bits(&[Features::OPTION_ANCHORS]),
             );
 
         // Opener signs own commitment.
@@ -1178,7 +1193,7 @@ mod tests {
                 6_988_000_000,
                 3_000_000_000,
                 4_001,
-                vec![0x40, 0x00, 0x00],
+                Features::from_bits(&[Features::OPTION_ANCHORS]),
             );
 
         // Opener signs own commitment.
@@ -1222,7 +1237,7 @@ mod tests {
                 6_999_999_000,
                 3_000_000_123,
                 546,
-                vec![0x40, 0x00, 0x00],
+                Features::from_bits(&[Features::OPTION_ANCHORS]),
             );
 
         // Opener signs own commitment.
@@ -1266,7 +1281,7 @@ mod tests {
                 5_008_760_000,
                 4_991_240_000,
                 546,
-                vec![0x40, 0x00, 0x00],
+                Features::from_bits(&[Features::OPTION_ANCHORS]),
             );
 
         // Opener signs own commitment.
@@ -1329,7 +1344,7 @@ mod tests {
         );
     }
 
-    fn sample_chan_config(funding_satoshis: u64, channel_type: Vec<u8>) -> ChannelConfig {
+    fn sample_chan_config(funding_satoshis: u64, channel_type: Features) -> ChannelConfig {
         let sample_key =
             pubkey("03b28f7c5a9d1e4f8c6a7b2d3e9f1048576a1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e");
         let sample_party = || ChannelPartyConfig {
@@ -1360,7 +1375,10 @@ mod tests {
     fn new_initial_from_funding_msat_overflow() {
         let sample_key =
             pubkey("03b28f7c5a9d1e4f8c6a7b2d3e9f1048576a1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e");
-        let chan_config = sample_chan_config(u64::MAX, vec![]);
+        let chan_config = sample_chan_config(
+            u64::MAX,
+            Features::from_bits(&[Features::OPTION_STATIC_REMOTEKEY]),
+        );
         let result = chan_config.new_initial_commitment(0, 15_000, sample_key, sample_key);
         assert!(matches!(result, Err(CommitmentError::FundingMsatOverflow)));
     }
@@ -1369,7 +1387,10 @@ mod tests {
     fn new_initial_from_funding_push_exceeds_funding() {
         let sample_key =
             pubkey("03b28f7c5a9d1e4f8c6a7b2d3e9f1048576a1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e");
-        let chan_config = sample_chan_config(1_000, vec![]);
+        let chan_config = sample_chan_config(
+            1_000,
+            Features::from_bits(&[Features::OPTION_STATIC_REMOTEKEY]),
+        );
         let result = chan_config.new_initial_commitment(2_000_000, 15_000, sample_key, sample_key);
         assert!(matches!(result, Err(CommitmentError::PushExceedsFunding)));
     }
@@ -1377,28 +1398,32 @@ mod tests {
     #[test]
     fn opener_balance_after_commitment_cost_total_sat_checks() {
         let feerate_per_kw: u32 = 15_000;
-        let anchor_channel_type = [0x40, 0x00, 0x00];
+        let legacy = Features::from_bits(&[Features::OPTION_STATIC_REMOTEKEY]);
+        let anchor = Features::from_bits(&[Features::OPTION_ANCHORS]);
         // Legacy fee: 15000 * 724 / 1000 = 10_860 sat
         // Anchor fee: 15000 * 1124 / 1000 = 16_860 sat; anchor_cost = 660 sat
 
         // Comfortably affordable
         let opener_balance_sat: u64 = 20_000;
         assert_eq!(
-            opener_balance_sat.checked_sub(CommitmentCost::new(feerate_per_kw, &[]).total_sat()),
+            opener_balance_sat
+                .checked_sub(CommitmentCost::new(feerate_per_kw, &legacy).total_sat()),
             Some(9_140),
         );
 
         // Exact zero opener balance
         let opener_balance_sat: u64 = 10_860;
         assert_eq!(
-            opener_balance_sat.checked_sub(CommitmentCost::new(feerate_per_kw, &[]).total_sat()),
+            opener_balance_sat
+                .checked_sub(CommitmentCost::new(feerate_per_kw, &legacy).total_sat()),
             Some(0),
         );
 
         // Balance does not cover the fee
         let opener_balance_sat: u64 = 10_000;
         assert_eq!(
-            opener_balance_sat.checked_sub(CommitmentCost::new(feerate_per_kw, &[]).total_sat()),
+            opener_balance_sat
+                .checked_sub(CommitmentCost::new(feerate_per_kw, &legacy).total_sat()),
             None
         );
 
@@ -1406,7 +1431,7 @@ mod tests {
         let opener_balance_sat: u64 = 17_500;
         assert_eq!(
             opener_balance_sat
-                .checked_sub(CommitmentCost::new(feerate_per_kw, &anchor_channel_type).total_sat()),
+                .checked_sub(CommitmentCost::new(feerate_per_kw, &anchor).total_sat()),
             None,
         );
     }

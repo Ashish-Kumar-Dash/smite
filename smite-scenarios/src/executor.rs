@@ -9,7 +9,7 @@ use bitcoin::{OutPoint, ScriptBuf, Txid};
 use smite::bitcoin::{BitcoinCli, TxBlockPosition, Utxo};
 use smite::bolt::{
     AcceptChannel, AnnouncementSignatures, ChannelAnnouncement, ChannelId, ChannelReady,
-    ChannelReadyTlvs, ChannelUpdate, FundingCreated, FundingSigned, Message, MessageType,
+    ChannelReadyTlvs, ChannelUpdate, Features, FundingCreated, FundingSigned, Message, MessageType,
     NodeAnnouncement, OpenChannel, OpenChannelTlvs, Pong, ShortChannelId, Shutdown,
 };
 use smite::channel_tx::{
@@ -938,7 +938,7 @@ fn build_funding_created(
     let config = ChannelConfig {
         funding_outpoint,
         funding_satoshis: open_channel.funding_satoshis,
-        channel_type: open_channel.tlvs.channel_type.clone().unwrap_or_default(),
+        channel_type: Features::from(open_channel.tlvs.channel_type.clone().unwrap_or_default()),
         opener,
         acceptor,
         minimum_depth: accept_channel.minimum_depth,
