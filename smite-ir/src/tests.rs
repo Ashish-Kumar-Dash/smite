@@ -34,6 +34,22 @@ fn assert_well_formed(program: &Program) {
     }
 }
 
+/// Returns the index of the first instruction in `$program` whose operation
+/// matches `$pattern`.
+///
+/// # Panics
+///
+/// Panics if `$program` contains no matching instruction.
+macro_rules! find_operation {
+    ($program:expr, $pattern:pat) => {
+        $program
+            .instructions
+            .iter()
+            .position(|i| matches!(i.operation, $pattern))
+            .unwrap_or_else(|| panic!("expected a {}", stringify!($pattern)))
+    };
+}
+
 #[test]
 #[allow(clippy::too_many_lines)]
 fn display_open_channel_program() {
@@ -1321,18 +1337,12 @@ fn generated_funding_flow_program_structure() {
     );
 
     // Key operations must appear in protocol order.
-    let position = |pred: fn(&Operation) -> bool| {
-        ops.iter()
-            .position(|op| pred(op))
-            .expect("operation present")
-    };
-
-    let recv_accept_channel = position(|op| matches!(op, Operation::RecvAcceptChannel));
-    let send_funding_created = position(|op| matches!(op, Operation::SendFundingCreated));
-    let recv_funding_signed = position(|op| matches!(op, Operation::RecvFundingSigned));
-    let broadcast_transaction = position(|op| matches!(op, Operation::BroadcastTransaction));
-    let send_channel_ready = position(|op| matches!(op, Operation::SendChannelReady { .. }));
-    let recv_channel_ready = position(|op| matches!(op, Operation::RecvChannelReady));
+    let recv_accept_channel = find_operation!(program, Operation::RecvAcceptChannel);
+    let send_funding_created = find_operation!(program, Operation::SendFundingCreated);
+    let recv_funding_signed = find_operation!(program, Operation::RecvFundingSigned);
+    let broadcast_transaction = find_operation!(program, Operation::BroadcastTransaction);
+    let send_channel_ready = find_operation!(program, Operation::SendChannelReady { .. });
+    let recv_channel_ready = find_operation!(program, Operation::RecvChannelReady);
 
     assert!(
         recv_accept_channel < send_funding_created,
