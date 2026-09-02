@@ -121,11 +121,13 @@ struct DoctorReport {
 enum CheckFailure {
     #[error("unsupported architecture: {0}")]
     UnsupportedArchitecture(String),
-    #[error("neither vmx nor svm flag found in /proc/cpuinfo")]
+    #[error(
+        "neither vmx nor svm flag found in /proc/cpuinfo; enable VT-x (Intel) or AMD-V (AMD) in your BIOS/UEFI settings"
+    )]
     MissingCpuVirtualization,
     #[error("{} not found", .0.display())]
     MissingPath(PathBuf),
-    #[error("{} not executable", .0.display())]
+    #[error("{} not executable; run: chmod +x {}", .0.display(), .0.display())]
     NotExecutable(PathBuf),
     #[error("{}: {error}", path.display())]
     Io {
@@ -137,7 +139,9 @@ enum CheckFailure {
     ToolNotFound(String),
     #[error("{command}: {detail}")]
     Command { command: String, detail: String },
-    #[error("libnyx.so not found under --aflpp-path")]
+    #[error(
+        "libnyx.so not found under --aflpp-path; rebuild AFL++ with Nyx support (see nyx_mode/README.md in your AFL++ source tree)"
+    )]
     LibnyxNotFound,
     #[error("backdoor disabled; run ./scripts/enable-vmware-backdoor.sh to enable")]
     VMwareBackdoorDisabled,
@@ -478,7 +482,7 @@ mod tests {
         let err = require_executable(&path).unwrap_err();
         assert_eq!(
             err.to_string(),
-            format!("{} not executable", path.display())
+            format!("{p} not executable; run: chmod +x {p}", p = path.display())
         );
     }
 
@@ -516,7 +520,7 @@ mod tests {
         assert_eq!(parsed["checks"][1]["passed"], false);
         assert_eq!(
             parsed["checks"][1]["reason"],
-            "neither vmx nor svm flag found in /proc/cpuinfo"
+            "neither vmx nor svm flag found in /proc/cpuinfo; enable VT-x (Intel) or AMD-V (AMD) in your BIOS/UEFI settings"
         );
     }
 
