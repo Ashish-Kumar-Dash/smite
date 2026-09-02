@@ -3359,6 +3359,21 @@ mod tests {
         instrs
     }
 
+    fn recv_channel_ready_instructions(confirmations: u8) -> Vec<Instruction> {
+        let mut instrs = send_funding_created_and_recv_funding_signed_instructions();
+        instrs.extend([
+            Instruction {
+                operation: Operation::MineBlocks(confirmations),
+                inputs: vec![],
+            },
+            Instruction {
+                operation: Operation::RecvChannelReady,
+                inputs: vec![],
+            },
+        ]);
+        instrs
+    }
+
     #[test]
     fn execute_send_funding_created_and_recv_funding_signed() {
         let mock_cli = MockBitcoinCli {
@@ -4051,19 +4066,9 @@ mod tests {
     fn execute_recv_channel_ready_below_minimum_depth_is_noop() {
         let (mut executor, channel_id, _) = recv_channel_ready_executor();
 
-        let mut instrs = send_funding_created_and_recv_funding_signed_instructions();
-        instrs.extend([
-            Instruction {
-                // Mine one block fewer than the `minimum_depth` negotiated in
-                // `accept_channel` by `sample_funding_negotiation()`.
-                operation: Operation::MineBlocks(5),
-                inputs: vec![],
-            },
-            Instruction {
-                operation: Operation::RecvChannelReady,
-                inputs: vec![],
-            },
-        ]);
+        // Mine one block fewer than the `minimum_depth` negotiated in `accept_channel` by
+        // `sample_funding_negotiation()`.
+        let instrs = recv_channel_ready_instructions(5);
 
         // With fewer than the negotiated `minimum_depth` confirmations the target
         // does not yet owe us a `channel_ready`, so `RecvChannelReady` must be a
@@ -4089,19 +4094,9 @@ mod tests {
     fn execute_recv_channel_ready_at_minimum_depth_records_point() {
         let (mut executor, channel_id, target_pcp) = recv_channel_ready_executor();
 
-        let mut instrs = send_funding_created_and_recv_funding_signed_instructions();
-        instrs.extend([
-            Instruction {
-                // Mine exactly the `minimum_depth` negotiated in
-                // `accept_channel` by `sample_funding_negotiation()`.
-                operation: Operation::MineBlocks(6),
-                inputs: vec![],
-            },
-            Instruction {
-                operation: Operation::RecvChannelReady,
-                inputs: vec![],
-            },
-        ]);
+        // Mine exactly the `minimum_depth` negotiated in `accept_channel` by
+        // `sample_funding_negotiation()`.
+        let instrs = recv_channel_ready_instructions(6);
 
         // At the negotiated `minimum_depth` confirmations the target owes us a
         // `channel_ready`, which `RecvChannelReady` receives and records.
