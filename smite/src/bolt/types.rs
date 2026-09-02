@@ -39,6 +39,13 @@ pub const PER_COMMITMENT_SECRET_SIZE: usize = 32;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 pub struct ChannelId(pub [u8; CHANNEL_ID_SIZE]);
 
+/// A `temporary_channel_id`: the id a channel is known by from `open_channel`
+/// until the real `channel_id` exists.
+///
+/// Same wire type as [`ChannelId`], so this only documents which of the two
+/// ids a value is.
+pub type TemporaryChannelId = ChannelId;
+
 impl ChannelId {
     /// Special all-zero channel ID indicating "all channels" (for errors)
     /// or "not channel-specific" (for warnings).

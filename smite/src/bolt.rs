@@ -76,7 +76,7 @@ pub use tx_remove_output::TxRemoveOutput;
 pub use types::{
     BigSize, CHANNEL_ID_SIZE, COMPACT_SIGNATURE_SIZE, ChannelId, MAX_MESSAGE_SIZE,
     PAYMENT_ONION_PACKET_SIZE, PER_COMMITMENT_SECRET_SIZE, PUBLIC_KEY_SIZE, SHA256_HASH_SIZE,
-    SHORT_CHANNEL_ID_SIZE, ShortChannelId, TXID_SIZE, Tu32, Tu64,
+    SHORT_CHANNEL_ID_SIZE, ShortChannelId, TXID_SIZE, TemporaryChannelId, Tu32, Tu64,
 };
 pub use update_add_htlc::{UpdateAddHtlc, UpdateAddHtlcTlvs};
 pub use update_fail_htlc::{UpdateFailHtlc, UpdateFailHtlcTlvs};
@@ -605,7 +605,7 @@ mod tests {
 
         OpenChannel {
             chain_hash: [0xaa; CHAIN_HASH_SIZE],
-            temporary_channel_id: ChannelId::new([0xbb; 32]),
+            temporary_channel_id: TemporaryChannelId::new([0xbb; 32]),
             funding_satoshis: 100_000,
             push_msat: 0,
             dust_limit_satoshis: 546,
@@ -642,7 +642,7 @@ mod tests {
         let pk = PublicKey::from_secret_key(&secp, &sk);
 
         AcceptChannel {
-            temporary_channel_id: ChannelId::new([0xbb; 32]),
+            temporary_channel_id: TemporaryChannelId::new([0xbb; 32]),
             dust_limit_satoshis: 546,
             max_htlc_value_in_flight_msat: 100_000_000,
             channel_reserve_satoshis: 10_000,
@@ -677,7 +677,7 @@ mod tests {
         let sig = secp.sign_ecdsa(&msg, &sk);
 
         FundingCreated {
-            temporary_channel_id: ChannelId::new([0xbb; CHANNEL_ID_SIZE]),
+            temporary_channel_id: TemporaryChannelId::new([0xbb; CHANNEL_ID_SIZE]),
             funding_txid: Txid::from_byte_array([0xcc; TXID_SIZE]),
             funding_output_index: 0,
             signature: sig,
@@ -805,7 +805,7 @@ mod tests {
 
         OpenChannel2 {
             chain_hash: [0xaa; CHAIN_HASH_SIZE],
-            temporary_channel_id: ChannelId::new([0xbb; 32]),
+            temporary_channel_id: TemporaryChannelId::new([0xbb; 32]),
             funding_feerate_perkw: 2_500,
             commitment_feerate_perkw: 253,
             funding_satoshis: 100_000,
@@ -851,7 +851,7 @@ mod tests {
             .collect();
 
         AcceptChannel2 {
-            temporary_channel_id: ChannelId::new([0xbb; CHANNEL_ID_SIZE]),
+            temporary_channel_id: TemporaryChannelId::new([0xbb; CHANNEL_ID_SIZE]),
             funding_satoshis: 50_000,
             dust_limit_satoshis: 546,
             max_htlc_value_in_flight_msat: 100_000_000,

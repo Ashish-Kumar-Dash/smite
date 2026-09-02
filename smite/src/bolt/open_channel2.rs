@@ -2,7 +2,7 @@
 
 use super::BoltError;
 use super::tlv::TlvStream;
-use super::types::{CHAIN_HASH_SIZE, ChannelId};
+use super::types::{CHAIN_HASH_SIZE, TemporaryChannelId};
 use super::wire::{EmptyTlv, WireFormat};
 use bitcoin::secp256k1::PublicKey;
 
@@ -24,7 +24,7 @@ pub struct OpenChannel2 {
     /// The genesis hash of the blockchain on which the channel is to be opened
     pub chain_hash: [u8; CHAIN_HASH_SIZE],
     /// A temporary channel ID used until the funding outpoint is announced
-    pub temporary_channel_id: ChannelId,
+    pub temporary_channel_id: TemporaryChannelId,
     /// The feerate for the funding transaction, in satoshis per 1000 weight units
     pub funding_feerate_perkw: u32,
     /// The feerate for commitment transactions, in satoshis per 1000 weight units
@@ -221,7 +221,7 @@ mod tests {
 
         OpenChannel2 {
             chain_hash: [0xaa; CHAIN_HASH_SIZE],
-            temporary_channel_id: ChannelId::new([0xbb; 32]),
+            temporary_channel_id: TemporaryChannelId::new([0xbb; 32]),
             funding_feerate_perkw: 2_500,
             commitment_feerate_perkw: 253,
             funding_satoshis: 100_000,

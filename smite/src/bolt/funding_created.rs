@@ -1,7 +1,7 @@
 //! BOLT 2 funding created message.
 
 use super::BoltError;
-use super::types::ChannelId;
+use super::types::TemporaryChannelId;
 use super::wire::WireFormat;
 use bitcoin::Txid;
 use bitcoin::secp256k1::ecdsa::Signature;
@@ -14,7 +14,7 @@ use bitcoin::secp256k1::ecdsa::Signature;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FundingCreated {
     /// A temporary channel ID used until the funding outpoint is announced
-    pub temporary_channel_id: ChannelId,
+    pub temporary_channel_id: TemporaryChannelId,
     /// The transaction ID of the funding transaction
     pub funding_txid: Txid,
     /// The specific output index funding this channel
@@ -73,7 +73,7 @@ mod tests {
         let sig = secp.sign_ecdsa(&msg, &sk);
 
         FundingCreated {
-            temporary_channel_id: ChannelId::new([0xbb; CHANNEL_ID_SIZE]),
+            temporary_channel_id: TemporaryChannelId::new([0xbb; CHANNEL_ID_SIZE]),
             funding_txid: Txid::from_byte_array([0xcc; TXID_SIZE]),
             funding_output_index: 0,
             signature: sig,
