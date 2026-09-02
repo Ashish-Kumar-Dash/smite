@@ -272,7 +272,7 @@ fn verify_initial_commitment(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bolt::{AcceptChannelTlvs, ChannelId, OpenChannelTlvs};
+    use crate::bolt::{AcceptChannelTlvs, OpenChannelTlvs, TemporaryChannelId};
     use bitcoin::secp256k1::{PublicKey, Secp256k1, SecretKey};
 
     fn pubkey(seed: u8) -> PublicKey {
@@ -285,7 +285,7 @@ mod tests {
         let key = pubkey(1);
         OpenChannel {
             chain_hash: [0u8; 32],
-            temporary_channel_id: ChannelId::new([1u8; 32]),
+            temporary_channel_id: TemporaryChannelId::new([1u8; 32]),
             funding_satoshis: 10_000_000,
             push_msat: 3_000_000_000,
             dust_limit_satoshis: 546,
@@ -313,7 +313,7 @@ mod tests {
     fn accept_channel() -> AcceptChannel {
         let key = pubkey(2);
         AcceptChannel {
-            temporary_channel_id: ChannelId::new([1u8; 32]),
+            temporary_channel_id: TemporaryChannelId::new([1u8; 32]),
             dust_limit_satoshis: 546,
             max_htlc_value_in_flight_msat: 100_000_000,
             channel_reserve_satoshis: 10_000,

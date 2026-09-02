@@ -8,7 +8,7 @@
 //! never a `Violation` (e.g., transport failures, insufficient wallet funds,
 //! mutator-produced invalid commitments, undecodable harness input).
 
-use crate::bolt::ChannelId;
+use crate::bolt::{ChannelId, TemporaryChannelId};
 
 /// A detected misbehavior of the target under test.
 #[derive(Debug, thiserror::Error)]
@@ -34,7 +34,7 @@ pub enum Violation {
     /// - its own fields breach the `accept_channel` requirements, or
     /// - it reuses a `temporary_channel_id` still awaiting `funding_created`.
     #[error("invalid accept_channel for temporary_channel_id {0}: {1}")]
-    InvalidAcceptChannel(ChannelId, String),
+    InvalidAcceptChannel(TemporaryChannelId, String),
 
     /// The target sent a `funding_signed` or `channel_ready` for a `channel_id`
     /// we never opened, i.e. one for which no state was ever established.

@@ -2,7 +2,7 @@
 
 use super::BoltError;
 use super::tlv::TlvStream;
-use super::types::ChannelId;
+use super::types::TemporaryChannelId;
 use super::wire::WireFormat;
 use bitcoin::secp256k1::PublicKey;
 
@@ -19,7 +19,7 @@ const TLV_CHANNEL_TYPE: u64 = 1;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AcceptChannel {
     /// The same temporary channel ID received from the initiator's `open_channel` message.
-    pub temporary_channel_id: ChannelId,
+    pub temporary_channel_id: TemporaryChannelId,
     /// The threshold below which outputs on transactions broadcast by the channel acceptor will be omitted
     pub dust_limit_satoshis: u64,
     /// The maximum total value of inbound HTLCs in flight toward the channel acceptor, in millisatoshis
@@ -176,7 +176,7 @@ mod tests {
             .collect();
 
         AcceptChannel {
-            temporary_channel_id: ChannelId::new([0xbb; 32]),
+            temporary_channel_id: TemporaryChannelId::new([0xbb; 32]),
             dust_limit_satoshis: 546,
             max_htlc_value_in_flight_msat: 100_000_000,
             channel_reserve_satoshis: 10_000,
