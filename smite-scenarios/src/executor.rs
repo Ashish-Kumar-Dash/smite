@@ -1246,6 +1246,24 @@ fn recv_non_ping(conn: &mut impl Connection, timeout: Duration) -> Result<Messag
             }
             // Surface the received error message.
             Message::Error(e) => return Err(ExecuteError::PeerError(e)),
+            // Log the human-readable data before handing the message to the
+            // caller, which typically only inspects the message type.
+            Message::Warning(ref w) => {
+                log::debug!(
+                    "received warning on {}: {}",
+                    w.channel_id,
+                    String::from_utf8_lossy(&w.data)
+                );
+                return Ok(msg);
+            }
+            Message::TxAbort(ref a) => {
+                log::debug!(
+                    "received tx_abort on {}: {}",
+                    a.channel_id,
+                    String::from_utf8_lossy(&a.data)
+                );
+                return Ok(msg);
+            }
             other => return Ok(other),
         }
     })();
