@@ -164,6 +164,7 @@ pub fn smite_run<S: Scenario>() -> std::process::ExitCode {
     // Drop runner before scenario. This provides a huge speedup in Nyx
     // mode since nyx_release() resets the VM before scenario cleanup
     // ever runs.
+    #[allow(clippy::drop_non_drop)]
     drop(runner);
 
     ExitCode::SUCCESS
