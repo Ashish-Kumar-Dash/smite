@@ -2,7 +2,7 @@
 
 use crate::executor::*;
 use bitcoin::{Amount, Transaction};
-use smite::bolt::AcceptChannelTlvs;
+use smite::bolt::{AcceptChannelTlvs, FromMessage};
 use std::collections::VecDeque;
 use std::str::FromStr;
 
@@ -239,47 +239,6 @@ impl Fixture {
         let got = msg.to_string();
         M::from_message(msg).unwrap_or_else(|| panic!("expected {}, got {got}", M::TYPE))
     }
-}
-
-/// Extracts a specific BOLT message from a decoded [`Message`].
-pub trait FromMessage: Sized {
-    /// Wire type of the expected BOLT message.
-    const TYPE: MessageType;
-
-    /// Returns the extracted BOLT message if `msg`'s type matches, `None`
-    /// otherwise.
-    fn from_message(msg: Message) -> Option<Self>;
-}
-
-/// Implements [`FromMessage`] for BOLT messages whose [`Message`] variant has
-/// the same name.
-macro_rules! impl_from_message {
-    ($($bolt_msg:ident => $msg_type:ident,)*) => {
-        $(
-            impl FromMessage for $bolt_msg {
-                const TYPE: MessageType = MessageType::$msg_type;
-
-                fn from_message(msg: Message) -> Option<Self> {
-                    match msg {
-                        Message::$bolt_msg(bolt_msg) => Some(bolt_msg),
-                        _ => None,
-                    }
-                }
-            }
-        )*
-    };
-}
-
-impl_from_message! {
-    Pong => PONG,
-    OpenChannel => OPEN_CHANNEL,
-    FundingCreated => FUNDING_CREATED,
-    ChannelReady => CHANNEL_READY,
-    Shutdown => SHUTDOWN,
-    ChannelAnnouncement => CHANNEL_ANNOUNCEMENT,
-    NodeAnnouncement => NODE_ANNOUNCEMENT,
-    ChannelUpdate => CHANNEL_UPDATE,
-    AnnouncementSignatures => ANNOUNCEMENT_SIGNATURES,
 }
 
 // -- Helpers --
