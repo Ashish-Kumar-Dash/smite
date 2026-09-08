@@ -1166,11 +1166,7 @@ fn execute_create_funding_transaction_insufficient_funds() {
 fn execute_send_funding_created_and_recv_funding_signed() {
     // The acceptor replies with funding_signed carrying its signature over
     // the opener's commitment.
-    let channel_id = funding_channel_id();
-
-    let mut fx = Fixture::new()
-        .with_negotiation(sample_funding_negotiation())
-        .queue(&funding_signed_reply(channel_id));
+    let mut fx = recv_funding_signed_fixture();
     fx.run(&Program {
         instructions: send_funding_created_and_recv_funding_signed_instructions(),
     });
@@ -1183,7 +1179,7 @@ fn execute_send_funding_created_and_recv_funding_signed() {
     assert_eq!(fc.funding_output_index, 0);
 
     // Verify the signature sent by the opener on the acceptor side.
-    let state = fx.channel_state(&channel_id);
+    let state = fx.channel_state(&funding_channel_id());
     let holder = HolderIdentity {
         side: Side::Acceptor,
         funding_privkey: acceptor_funding_sk(),
@@ -1202,8 +1198,6 @@ fn execute_send_funding_created_and_recv_funding_signed() {
 
 #[test]
 fn execute_send_funding_created_uses_wire_funding_pubkey() {
-    let channel_id = funding_channel_id();
-
     // Swap out the SendFundingCreated privkey. This should not affect the
     // constructed channel config, which uses the negotiated pubkeys. It
     // should only change the signature sent to the target.
@@ -1212,9 +1206,7 @@ fn execute_send_funding_created_uses_wire_funding_pubkey() {
 
     // The acceptor's signature still verifies, because the config is built
     // from the wire pubkeys rather than from the swapped privkey.
-    let mut fx = Fixture::new()
-        .with_negotiation(sample_funding_negotiation())
-        .queue(&funding_signed_reply(channel_id));
+    let mut fx = recv_funding_signed_fixture();
     fx.run(&Program {
         instructions: instrs,
     });
@@ -1222,7 +1214,7 @@ fn execute_send_funding_created_uses_wire_funding_pubkey() {
     let secp = Secp256k1::new();
     let opener_pk = PublicKey::from_secret_key(&secp, &opener_funding_sk());
     // The funding pubkey matches what was negotiated.
-    let state = fx.channel_state(&channel_id);
+    let state = fx.channel_state(&funding_channel_id());
     assert_eq!(state.config.opener.funding_pubkey, opener_pk);
     // But the swapped privkey used for signing is the acceptor's, which
     // does not match what was negotiated.
@@ -1243,9 +1235,6 @@ fn execute_send_funding_created_after_funding_built_does_not_track_channel() {
         },
         ..sample_utxo()
     };
-
-    // Channel id derived from the first funding transaction's outpoint.
-    let channel_id = funding_channel_id();
 
     let mut instrs = send_funding_created_and_recv_funding_signed_instructions();
     instrs.pop(); // Drop the trailing `RecvFundingSigned` instruction.
@@ -1271,7 +1260,9 @@ fn execute_send_funding_created_after_funding_built_does_not_track_channel() {
     // The message still goes out, only the state tracking is suppressed.
     assert_eq!(fx.sent_len(), 2);
     assert_eq!(fx.channel_states().len(), 1);
-    assert!(fx.channel_states().contains_key(&channel_id));
+    // The tracked channel id derives from the first funding transaction's
+    // outpoint.
+    assert!(fx.channel_states().contains_key(&funding_channel_id()));
 }
 
 #[test]
@@ -1411,11 +1402,7 @@ fn execute_send_channel_ready() {
         },
     ]);
 
-    // We also need to queue a `funding_signed`, since the instructions reused
-    // by this test expect one to be present in the receive queue.
-    let mut fx = Fixture::new()
-        .with_negotiation(sample_funding_negotiation())
-        .queue(&funding_signed_reply(channel_id));
+    let mut fx = recv_funding_signed_fixture();
     fx.run(&Program {
         instructions: instrs,
     });

@@ -361,17 +361,19 @@ pub fn channel_ready_reply(second_per_commitment_point: PublicKey) -> Message {
     })
 }
 
-/// A fixture with the funding negotiation seeded and both target replies
-/// queued, plus the target's per-commitment point for the assertions.
-pub fn recv_channel_ready_fixture() -> (Fixture, PublicKey) {
-    let target_pcp = sample_pubkey(1);
-
-    // We also need to queue a `funding_signed`, since the instructions reused
-    // by these tests expect one to be present in the receive queue.
-    let fx = Fixture::new()
+/// A fixture with the funding negotiation seeded and the target's
+/// `funding_signed` queued, as the funding-flow instructions expect.
+pub fn recv_funding_signed_fixture() -> Fixture {
+    Fixture::new()
         .with_negotiation(sample_funding_negotiation())
         .queue(&funding_signed_reply(funding_channel_id()))
-        .queue(&channel_ready_reply(target_pcp));
+}
+
+/// A [`recv_funding_signed_fixture`] with the target's `channel_ready` queued
+/// too, plus the per-commitment point it carries for the assertions.
+pub fn recv_channel_ready_fixture() -> (Fixture, PublicKey) {
+    let target_pcp = sample_pubkey(1);
+    let fx = recv_funding_signed_fixture().queue(&channel_ready_reply(target_pcp));
 
     (fx, target_pcp)
 }
