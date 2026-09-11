@@ -530,6 +530,71 @@ impl Message {
     }
 }
 
+/// A BOLT message that can be extracted from a decoded [`Message`].
+pub trait FromMessage: Sized {
+    /// Wire type of this message.
+    const TYPE: MessageType;
+
+    /// Returns the extracted BOLT message if `msg`'s type matches
+    /// [`Self::TYPE`], `None` otherwise.
+    fn from_message(msg: Message) -> Option<Self>;
+}
+
+/// Implements [`FromMessage`] for BOLT messages whose [`Message`] variant has
+/// the same name.
+macro_rules! impl_from_message {
+    ($($bolt_msg:ident => $msg_type:ident,)*) => {
+        $(
+            impl FromMessage for $bolt_msg {
+                const TYPE: MessageType = MessageType::$msg_type;
+
+                fn from_message(msg: Message) -> Option<Self> {
+                    match msg {
+                        Message::$bolt_msg(bolt_msg) => Some(bolt_msg),
+                        _ => None,
+                    }
+                }
+            }
+        )*
+    };
+}
+
+impl_from_message! {
+    Warning => WARNING,
+    Init => INIT,
+    Error => ERROR,
+    Ping => PING,
+    Pong => PONG,
+    OpenChannel => OPEN_CHANNEL,
+    AcceptChannel => ACCEPT_CHANNEL,
+    FundingCreated => FUNDING_CREATED,
+    FundingSigned => FUNDING_SIGNED,
+    ChannelReady => CHANNEL_READY,
+    Shutdown => SHUTDOWN,
+    ClosingComplete => CLOSING_COMPLETE,
+    ClosingSig => CLOSING_SIG,
+    OpenChannel2 => OPEN_CHANNEL2,
+    AcceptChannel2 => ACCEPT_CHANNEL2,
+    TxAddInput => TX_ADD_INPUT,
+    TxRemoveInput => TX_REMOVE_INPUT,
+    TxRemoveOutput => TX_REMOVE_OUTPUT,
+    TxComplete => TX_COMPLETE,
+    TxInitRbf => TX_INIT_RBF,
+    TxAckRbf => TX_ACK_RBF,
+    TxAbort => TX_ABORT,
+    UpdateAddHtlc => UPDATE_ADD_HTLC,
+    UpdateFulfillHtlc => UPDATE_FULFILL_HTLC,
+    UpdateFailHtlc => UPDATE_FAIL_HTLC,
+    CommitmentSigned => COMMITMENT_SIGNED,
+    RevokeAndAck => REVOKE_AND_ACK,
+    UpdateFailMalformedHtlc => UPDATE_FAIL_MALFORMED_HTLC,
+    ChannelAnnouncement => CHANNEL_ANNOUNCEMENT,
+    NodeAnnouncement => NODE_ANNOUNCEMENT,
+    ChannelUpdate => CHANNEL_UPDATE,
+    AnnouncementSignatures => ANNOUNCEMENT_SIGNATURES,
+    GossipTimestampFilter => GOSSIP_TIMESTAMP_FILTER,
+}
+
 /// Creates a raw message with the given type and payload.
 ///
 /// This is useful for fuzzing - it allows sending arbitrary payloads

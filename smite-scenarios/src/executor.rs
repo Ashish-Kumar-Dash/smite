@@ -9,8 +9,8 @@ use bitcoin::{OutPoint, ScriptBuf, Txid};
 use smite::bitcoin::{BitcoinCli, TxBlockPosition, Utxo};
 use smite::bolt::{
     AcceptChannel, AnnouncementSignatures, ChannelAnnouncement, ChannelId, ChannelReady,
-    ChannelReadyTlvs, ChannelUpdate, Features, FundingCreated, FundingSigned, Message, MessageType,
-    NodeAnnouncement, OpenChannel, OpenChannelTlvs, Pong, ShortChannelId, Shutdown,
+    ChannelReadyTlvs, ChannelUpdate, Features, FromMessage, FundingCreated, FundingSigned, Message,
+    MessageType, NodeAnnouncement, OpenChannel, OpenChannelTlvs, Pong, ShortChannelId, Shutdown,
     TemporaryChannelId,
 };
 use smite::channel_tx::{
@@ -497,7 +497,7 @@ impl<C: Connection, B: BitcoinRpc, R: TargetRpc> Executor<C, B, R> {
                         instr.operation.input_types()[0],
                     );
                     log::debug!("[{:?}] RecvAcceptChannel: waiting", start.elapsed());
-                    let ac = recv_accept_channel(&mut self.conn)?;
+                    let ac: AcceptChannel = recv_bolt(&mut self.conn, RECV_IDLE_TIMEOUT)?;
                     log::debug!("[{:?}] RecvAcceptChannel: received", start.elapsed());
                     AcceptChannelOracle.evaluate(&AcceptChannelContext {
                         accept_channel: &ac,
@@ -514,7 +514,7 @@ impl<C: Connection, B: BitcoinRpc, R: TargetRpc> Executor<C, B, R> {
                         instr.operation.input_types()[0],
                     );
                     log::debug!("[{:?}] RecvFundingSigned: waiting", start.elapsed());
-                    let fs = recv_funding_signed(&mut self.conn)?;
+                    let fs: FundingSigned = recv_bolt(&mut self.conn, RECV_IDLE_TIMEOUT)?;
                     log::debug!("[{:?}] RecvFundingSigned: received", start.elapsed());
                     verify_funding_signed(&fs, &self.channel_states)?;
                     Some(Variable::ChannelId(fs.channel_id))
@@ -1165,26 +1165,22 @@ fn recv_non_ping(conn: &mut impl Connection, timeout: Duration) -> Result<Messag
     result
 }
 
-/// Receives and decodes an `accept_channel` message.
-fn recv_accept_channel(conn: &mut impl Connection) -> Result<AcceptChannel, ExecuteError> {
-    match recv_non_ping(conn, RECV_IDLE_TIMEOUT)? {
-        Message::AcceptChannel(ac) => Ok(ac),
-        other => Err(ExecuteError::UnexpectedMessage {
-            expected: MessageType::ACCEPT_CHANNEL,
-            got: other.msg_type(),
-        }),
-    }
-}
-
-/// Receives and decodes a `funding_signed` message.
-fn recv_funding_signed(conn: &mut impl Connection) -> Result<FundingSigned, ExecuteError> {
-    match recv_non_ping(conn, RECV_IDLE_TIMEOUT)? {
-        Message::FundingSigned(fs) => Ok(fs),
-        other => Err(ExecuteError::UnexpectedMessage {
-            expected: MessageType::FUNDING_SIGNED,
-            got: other.msg_type(),
-        }),
-    }
+/// Receives and decodes the next message, requiring it to be an `M`.
+///
+/// # Errors
+///
+/// Returns [`ExecuteError::UnexpectedMessage`] if the received message is not
+/// an `M`.
+fn recv_bolt<M: FromMessage>(
+    conn: &mut impl Connection,
+    timeout: Duration,
+) -> Result<M, ExecuteError> {
+    let msg = recv_non_ping(conn, timeout)?;
+    let got = msg.msg_type();
+    M::from_message(msg).ok_or(ExecuteError::UnexpectedMessage {
+        expected: M::TYPE,
+        got,
+    })
 }
 
 /// Receives and decodes a `channel_ready` message.
@@ -1201,15 +1197,7 @@ fn recv_channel_ready(
     conn: &mut impl Connection,
     channel_states: &mut HashMap<ChannelId, ChannelState>,
 ) -> Result<(), ExecuteError> {
-    let cr = match recv_non_ping(conn, RECV_CHANNEL_READY_TIMEOUT)? {
-        Message::ChannelReady(cr) => cr,
-        other => {
-            return Err(ExecuteError::UnexpectedMessage {
-                expected: MessageType::CHANNEL_READY,
-                got: other.msg_type(),
-            });
-        }
-    };
+    let cr: ChannelReady = recv_bolt(conn, RECV_CHANNEL_READY_TIMEOUT)?;
 
     let state = channel_states
         .get_mut(&cr.channel_id)
