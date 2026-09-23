@@ -36,8 +36,8 @@ impl ReproduceCommand {
     /// `false` only on an operational failure: unknown campaign, missing input,
     /// missing image, or a Docker spawn error.
     pub fn execute(args: &ReproduceArgs) -> bool {
-        let (state, _) = match CampaignState::load_campaign(&args.campaign_id) {
-            Ok(x) => x,
+        let state = match CampaignState::load_campaign(&args.campaign_id) {
+            Ok(s) => s,
             Err(e) => {
                 log::error!("{e}");
                 return false;

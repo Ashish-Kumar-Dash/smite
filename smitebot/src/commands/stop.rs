@@ -41,8 +41,8 @@ impl StopCommand {
     /// Stops a campaign: reaps its runner process groups, tears down the tmux
     /// session, and records the stop in state.json.
     pub fn execute(args: &StopArgs) -> bool {
-        let (mut state, state_path) = match CampaignState::load_campaign(&args.campaign_id) {
-            Ok(x) => x,
+        let mut state = match CampaignState::load_campaign(&args.campaign_id) {
+            Ok(s) => s,
             Err(e) => {
                 log::error!("{e}");
                 return false;
@@ -63,7 +63,7 @@ impl StopCommand {
 
         state.status = Status::Stopped;
         state.stop_time = Some(utils::epoch_secs());
-        if let Err(e) = state.save(&state_path) {
+        if let Err(e) = state.save_campaign() {
             log::error!(
                 "runners were reaped but recording the stop failed: {e}; \
                  campaign {} will still show as running in state.json",

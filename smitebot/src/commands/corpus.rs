@@ -78,7 +78,7 @@ fn execute_merge(args: &MergeArgs) -> bool {
     let mut states = Vec::with_capacity(args.campaign_ids.len());
     for campaign_id in &args.campaign_ids {
         match CampaignState::load_campaign(campaign_id) {
-            Ok((state, _)) => states.push(state),
+            Ok(state) => states.push(state),
             Err(e) => {
                 log::error!("{e}");
                 return false;
@@ -205,7 +205,7 @@ fn execute_minimize(args: &MinimizeArgs) -> bool {
     };
 
     let state = match CampaignState::load_campaign(&args.campaign_id) {
-        Ok((state, _)) => state,
+        Ok(s) => s,
         Err(e) => {
             log::error!("{e}");
             return false;

@@ -44,8 +44,8 @@ impl StatusCommand {
     /// Reports the status of a campaign, either as a one-shot summary or by
     /// attaching to its live tmux dashboard.
     pub fn execute(args: &StatusArgs) -> bool {
-        let (state, _) = match CampaignState::load_campaign(&args.campaign_id) {
-            Ok(x) => x,
+        let state = match CampaignState::load_campaign(&args.campaign_id) {
+            Ok(s) => s,
             Err(e) => {
                 log::error!("{e}");
                 return false;
