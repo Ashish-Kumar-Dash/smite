@@ -12,6 +12,7 @@ use std::process::Command;
 use clap::Args;
 
 use crate::config::Target;
+use crate::error::CliError;
 use crate::state::CampaignState;
 use crate::utils::docker_image_id;
 
@@ -31,33 +32,28 @@ pub struct ReproduceArgs {
 impl ReproduceCommand {
     /// Replays `input` against the campaign's target in Docker.
     ///
-    /// Returns `true` once the container has run to completion regardless of its
+    /// Returns `Ok(())` once the container has run to completion regardless of its
     /// exit status (the target's output, not the exit code, is the result), and
-    /// `false` only on an operational failure: unknown campaign, missing input,
+    /// an error only on an operational failure: unknown campaign, missing input,
     /// missing image, or a Docker spawn error.
-    pub fn execute(args: &ReproduceArgs) -> bool {
-        let state = match CampaignState::load_campaign(&args.campaign_id) {
-            Ok(s) => s,
-            Err(e) => {
-                log::error!("{e}");
-                return false;
-            }
-        };
+    pub fn execute(args: &ReproduceArgs) -> Result<(), CliError> {
+        let state = CampaignState::load_campaign(&args.campaign_id)?;
 
         // Resolve to an absolute path: Docker `-v` requires one, and this also
         // rejects a missing input up front. Mount the parent directory and pass
         // the file's basename via SMITE_INPUT so colons in AFL crash names (e.g.
         // `id:000000,sig:06,...`) never appear in the bind-mount spec.
-        let input = match fs::canonicalize(&args.input) {
-            Ok(p) => p,
-            Err(e) => {
-                log::error!("input file not found: {} ({e})", args.input.display());
-                return false;
-            }
-        };
+        let input = fs::canonicalize(&args.input).map_err(|e| {
+            CliError::Msg(format!(
+                "input file not found: {} ({e})",
+                args.input.display()
+            ))
+        })?;
         if !input.is_file() {
-            log::error!("input is not a regular file: {}", input.display());
-            return false;
+            return Err(CliError::Msg(format!(
+                "input is not a regular file: {}",
+                input.display()
+            )));
         }
         // docker run takes string arguments, so reject a non-UTF-8 path rather than
         // silently mangling the mount spec. canonicalize guarantees a parent and a
@@ -66,18 +62,17 @@ impl ReproduceCommand {
             input.parent().and_then(Path::to_str),
             input.file_name().and_then(|name| name.to_str()),
         ) else {
-            log::error!("input path is not valid UTF-8: {}", input.display());
-            return false;
+            return Err(CliError::Msg(format!(
+                "input path is not valid UTF-8: {}",
+                input.display()
+            )));
         };
 
         let Some(image_id) = docker_image_id(&state.image) else {
-            log::error!(
+            return Err(CliError::Msg(format!(
                 "Docker image '{}' not found; build it with: smitebot build --target {} --scenario {}",
-                state.image,
-                state.target,
-                state.scenario
-            );
-            return false;
+                state.image, state.target, state.scenario
+            )));
         };
         // A campaign's image can be rebuilt under the same tag during development,
         // so a matching name is not a matching image. Warn on a digest mismatch and
@@ -98,13 +93,11 @@ impl ReproduceCommand {
             state.image
         );
         let run_args = docker_run_args(&state.image, state.target, parent, basename);
-        match Command::new("docker").args(&run_args).status() {
-            Ok(_) => true,
-            Err(e) => {
-                log::error!("failed to run docker: {e}");
-                false
-            }
-        }
+        Command::new("docker")
+            .args(&run_args)
+            .status()
+            .map_err(|e| CliError::Msg(format!("failed to run docker: {e}")))?;
+        Ok(())
     }
 }
 

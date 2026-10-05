@@ -14,6 +14,7 @@ use clap::Args;
 
 use crate::commands::build::{BuildInputs, run_build};
 use crate::config::CampaignConfig;
+use crate::error::CliError;
 use crate::state::{CampaignState, RunnerState, Status};
 use crate::tmux;
 use crate::utils::{command_stdout, docker_image_id, setup_nyx, shell_quote};
@@ -48,26 +49,19 @@ pub struct StartArgs {
 
 impl StartCommand {
     /// Launches a fuzzing campaign from the given configuration.
-    pub fn execute(args: &StartArgs) -> bool {
-        let config = match CampaignConfig::load(&args.path) {
-            Ok(c) => c,
-            Err(e) => {
-                log::error!("{e}");
-                return false;
-            }
-        };
+    pub fn execute(args: &StartArgs) -> Result<(), CliError> {
+        let config = CampaignConfig::load(&args.path)?;
 
         let path_errors = config.check_paths();
         if !path_errors.is_empty() {
-            for err in &path_errors {
-                log::error!("{err}");
-            }
-            return false;
+            return Err(CliError::Msg(path_errors.join("; ")));
         }
 
         if !tmux::is_available() {
-            log::error!("tmux is not available; install it or run `smitebot doctor` for details");
-            return false;
+            return Err(CliError::Msg(
+                "tmux is not available; install it or run `smitebot doctor` for details"
+                    .to_string(),
+            ));
         }
 
         let campaign_id = config.campaign_id();
@@ -77,54 +71,45 @@ impl StartCommand {
             .unwrap_or_else(|| campaign_id.clone());
 
         if tmux::session_exists(&tmux_session) {
-            log::error!(
+            return Err(CliError::Msg(format!(
                 "tmux session '{tmux_session}' already exists — is another campaign running?"
-            );
-            return false;
+            )));
         }
 
         if let Some(stats) = existing_campaign_runner(&config.output_dir, config.runners) {
-            log::error!(
+            return Err(CliError::Msg(format!(
                 "output_dir already holds a campaign ({}); smitebot start only \
                  begins fresh campaigns and does not resume — remove the directory \
                  or set a different output_dir",
                 stats.display()
-            );
-            return false;
+            )));
         }
 
         let image = config.image_tag();
 
         log::info!("building Docker image {image}");
         let inputs = BuildInputs::from_config(&config, &image);
-        if !run_build(&inputs) {
-            return false;
-        }
+        run_build(&inputs)?;
 
-        if config.scenario.starts_with("ir") && !build_ir_mutator(&config.smite_dir) {
-            return false;
+        if config.scenario.starts_with("ir") {
+            build_ir_mutator(&config.smite_dir)?;
         }
 
         log::info!("setting up Nyx sharedir at {}", config.sharedir.display());
-        if !setup_nyx(&config, &image) {
-            return false;
-        }
+        setup_nyx(&config, &image)?;
 
-        let seed_dir = match ensure_seed_dir(&config) {
-            Ok(dir) => dir,
-            Err(e) => {
-                log::error!("failed to prepare seed directory: {e}");
-                return false;
-            }
-        };
+        let seed_dir = ensure_seed_dir(&config)
+            .map_err(|e| CliError::Msg(format!("failed to prepare seed directory: {e}")))?;
 
         let Some(git_hash) = smite_git_hash(&config.smite_dir) else {
-            log::error!("could not determine smite git hash");
-            return false;
+            return Err(CliError::Msg(
+                "could not determine smite git hash".to_string(),
+            ));
         };
         let Some(image_digest) = docker_image_id(&image) else {
-            log::error!("could not determine Docker image digest for {image}");
-            return false;
+            return Err(CliError::Msg(format!(
+                "could not determine Docker image digest for {image}"
+            )));
         };
 
         let mut state = CampaignState::new(
@@ -136,18 +121,10 @@ impl StartCommand {
             tmux_session,
         );
 
-        if let Err(e) = state.save_campaign() {
-            log::error!("{e}");
-            return false;
-        }
+        state.save_campaign()?;
 
-        if !launch_runners(&config, &seed_dir, &mut state) {
-            return false;
-        }
-        if let Err(e) = state.save_campaign() {
-            log::error!("{e}");
-            return false;
-        }
+        launch_runners(&config, &seed_dir, &mut state)?;
+        state.save_campaign()?;
 
         log::info!("campaign {} is running", state.id);
         log::info!("state saved to ~/.smitebot/runs/{}/state.json", state.id);
@@ -157,13 +134,17 @@ impl StartCommand {
             log::warn!("failed to attach to tmux session: {e}");
         }
 
-        true
+        Ok(())
     }
 }
 
 /// Spawns all runners inside a tmux session, verifies they produce
 /// `fuzzer_stats`, and updates campaign state with PIDs.
-fn launch_runners(config: &CampaignConfig, seed_dir: &Path, state: &mut CampaignState) -> bool {
+fn launch_runners(
+    config: &CampaignConfig,
+    seed_dir: &Path,
+    state: &mut CampaignState,
+) -> Result<(), CliError> {
     let session = &state.tmux_session;
     log::info!(
         "starting {} runners in tmux session '{session}'",
@@ -184,10 +165,10 @@ fn launch_runners(config: &CampaignConfig, seed_dir: &Path, state: &mut Campaign
         };
 
         if let Err(e) = result {
-            log::error!("failed to create tmux window for runner {id}: {e}");
+            let msg = format!("failed to create tmux window for runner {id}: {e}");
             state.runners = runners;
             fail_campaign(state);
-            return false;
+            return Err(CliError::Msg(msg));
         }
 
         runners.push(RunnerState { id, pid: None });
@@ -208,13 +189,14 @@ fn launch_runners(config: &CampaignConfig, seed_dir: &Path, state: &mut Campaign
     ) {
         // verify_startup has already logged the specific reason per runner
         // (window died, or ceiling reached).
-        log::error!("one or more runners failed to start");
         fail_campaign(state);
-        return false;
+        return Err(CliError::Msg(
+            "one or more runners failed to start".to_string(),
+        ));
     }
 
     state.status = Status::Running;
-    true
+    Ok(())
 }
 
 /// Marks the campaign as failed, logs instructions to inspect the tmux session,
@@ -557,26 +539,21 @@ fn ir_mutator_envs(config: &CampaignConfig) -> Vec<(&'static str, String)> {
 }
 
 /// Builds the smite-ir-mutator shared library in release mode.
-fn build_ir_mutator(smite_dir: &Path) -> bool {
+fn build_ir_mutator(smite_dir: &Path) -> Result<(), CliError> {
     log::info!("building IR mutator library");
-    let status = match Command::new("cargo")
+    let status = Command::new("cargo")
         .args(["build", "--release", "-p", "smite-ir-mutator"])
         .current_dir(smite_dir)
         .status()
-    {
-        Ok(status) => status,
-        Err(e) => {
-            log::error!("failed to run cargo build: {e}");
-            return false;
-        }
-    };
+        .map_err(|e| CliError::Msg(format!("failed to run cargo build: {e}")))?;
 
     if !status.success() {
-        log::error!("cargo build for smite-ir-mutator failed with {status}");
-        return false;
+        return Err(CliError::Msg(format!(
+            "cargo build for smite-ir-mutator failed with {status}"
+        )));
     }
 
-    true
+    Ok(())
 }
 
 /// Returns the smite repository git hash, or `None` if not a git repo.
